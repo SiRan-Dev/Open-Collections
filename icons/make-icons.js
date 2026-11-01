@@ -128,7 +128,7 @@ function makeIcon(size) {
 }
 
 const outDir = __dirname;
-for (const s of [16, 48, 128]) {
+for (const s of [16, 32, 48, 128]) {
   fs.writeFileSync(path.join(outDir, `icon${s}.png`), makeIcon(s));
   console.log(`wrote icon${s}.png`);
 }

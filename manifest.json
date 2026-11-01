@@ -1,10 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Open Collections",
-  "version": "0.1.0",
-  "description": "Open Collections — 本地收藏夹。用侧边栏与独立窗口管理网页集锦：分组、摘录、搜索、批量打开、导入导出与 WebDAV 同步。",
+  "version": "1.0.0",
+  "minimum_chrome_version": "114",
+  "description": "把网页与摘录收进分组：侧边栏、搜索、批量打开、备份导入导出，可选 WebDAV 云同步。",
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
@@ -24,7 +26,9 @@
     "default_title": "Open Collections",
     "default_icon": {
       "16": "icons/icon16.png",
-      "48": "icons/icon48.png"
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
     }
   },
   "side_panel": {

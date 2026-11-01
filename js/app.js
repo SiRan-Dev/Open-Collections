@@ -946,6 +946,12 @@
   // ---- 启动 ----
   function init() {
     cacheEls();
+    // 关于页版本号取自 manifest，避免发版时多处手改漏更新。
+    const about = $('about-version');
+    if (about && chrome.runtime && chrome.runtime.getManifest) {
+      about.textContent = 'Open Collections v' + chrome.runtime.getManifest().version +
+        ' · 本地集锦管理。数据存放于浏览器 chrome.storage.local。';
+    }
     setGroupsFolded(NARROW_QUERY.matches);
     bindEvents();
     loadAndRender();

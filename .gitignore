@@ -5,3 +5,6 @@ node_modules/
 
 # 测试用临时文件（若有）
 .tmp/
+
+# 发布打包产物
+dist/
