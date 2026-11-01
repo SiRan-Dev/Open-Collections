@@ -539,15 +539,59 @@
     els.btnAddMenu.setAttribute('aria-expanded', String(open));
   }
 
+  function isCollectibleTab(tab) {
+    // 固定标签与浏览器内部页不参与。
+    return !!tab && !tab.pinned && /^https?:/i.test(tab.url || '');
+  }
+
+  async function getCollectWindow() {
+    try {
+      const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'], populate: true });
+      if (win && Array.isArray(win.tabs)) return win;
+    } catch (e) {
+      console.warn('[OpenCollections] getLastFocused failed:', e);
+    }
+    // 回退：以最后聚焦的活动标签所在窗口为准。
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab) return null;
+    const tabs = await chrome.tabs.query({ windowId: tab.windowId });
+    return { id: tab.windowId, tabs };
+  }
+
   async function collectWindowTabs(closeAfter) {
     setAddMenuOpen(false);
     try {
-      const res = await sendMessage({ type: 'collect-window-tabs', close: closeAfter });
-      const r = res.result || {};
+      const group = getActiveGroup();
+      if (!group) throw new Error('请先创建一个分组');
+
+      const win = await getCollectWindow();
+      if (!win) throw new Error('无法获取当前窗口的标签页');
+
+      const targets = (win.tabs || []).filter(isCollectibleTab);
+      if (!targets.length) throw new Error('当前窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
+
+      await Storage.addCards(group.id, targets.map((tab) => ({
+        type: 'page',
+        title: tab.title || tab.url,
+        url: tab.url,
+        favicon: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(tab.url)}&size=32`
+      })));
+
+      let closed = 0;
       if (closeAfter) {
-        toast(`已收藏 ${r.added} 个标签页，关闭 ${r.closed} 个`, 'success');
+        // 保留当前活动标签，避免侧边栏随之关闭。
+        const activeId = (win.tabs.find((t) => t.active) || {}).id;
+        const ids = targets.filter((t) => t.id !== activeId).map((t) => t.id);
+        if (ids.length) {
+          await chrome.tabs.remove(ids);
+          closed = ids.length;
+        }
+      }
+
+      if (closeAfter) {
+        toast(`已收藏 ${targets.length} 个标签页，关闭 ${closed} 个`, 'success');
       } else {
-        toast(`已将 ${r.added} 个标签页收进「${r.groupName}」`, 'success');
+        toast(`已将 ${targets.length} 个标签页收进「${group.name}」`, 'success');
       }
       await loadAndRender();
     } catch (e) {
@@ -555,7 +599,26 @@
     }
   }
 
+  // 侧边栏按钮点击不会自动获得 activeTab 权限；摘录需要注入脚本读取选区，
+  // 因此在用户点击时申请可选的全站访问权限（已授权时不会重复弹窗）。
+  function requestPageAccess() {
+    return new Promise((resolve) => {
+      if (!chrome.permissions || !chrome.permissions.request) return resolve(true);
+      chrome.permissions.request({ origins: ['<all_urls>'] }, (granted) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[OpenCollections] permission request:', chrome.runtime.lastError.message);
+        }
+        resolve(!!granted);
+      });
+    });
+  }
+
   async function saveSelection() {
+    const granted = await requestPageAccess();
+    if (!granted) {
+      toast('未获得页面访问权限，无法读取选区。可在扩展详情中开启站点访问权限后重试', 'error');
+      return;
+    }
     try {
       const res = await sendMessage({ type: 'save-selection' });
       toast((res.result && res.result.message) || '摘录已保存', 'success');
