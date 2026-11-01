@@ -11,7 +11,7 @@ chrome.runtime.onInstalled.addListener(async () => {
       await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
     }
   } catch (e) {
-    console.warn('[OpenPocket] setPanelBehavior failed:', e);
+    console.warn('[OpenCollections] setPanelBehavior failed:', e);
   }
 
   // 若没有数据，创建默认分组。
@@ -22,7 +22,7 @@ chrome.runtime.onInstalled.addListener(async () => {
       await Storage.createGroup('默认集锦', Utils.PALETTE[0]);
     }
   } catch (e) {
-    console.error('[OpenPocket] init default group failed:', e);
+    console.error('[OpenCollections] init default group failed:', e);
   }
 
   // 注册自动同步闹钟（如果设置开启）。
@@ -30,7 +30,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  rescheduleAutoSync().catch((e) => console.warn('[OpenPocket] reschedule auto sync failed:', e));
+  rescheduleAutoSync().catch((e) => console.warn('[OpenCollections] reschedule auto sync failed:', e));
 });
 
 // 若侧边栏能力不可用，点击扩展图标时降级为打开独立窗口。
@@ -127,7 +127,7 @@ async function toggleSidePanel() {
     const win = await chrome.windows.getCurrent();
     await chrome.sidePanel.open({ windowId: win.id });
   } catch (e) {
-    console.warn('[OpenPocket] side panel open failed, fallback to window:', e);
+    console.warn('[OpenCollections] side panel open failed, fallback to window:', e);
     openManagementWindow();
   }
 }
@@ -202,7 +202,7 @@ function notifyUI(payload) {
 }
 
 // ---- 自动同步闹钟 ----
-const AUTO_SYNC_ALARM = 'openpocket-auto-sync';
+const AUTO_SYNC_ALARM = 'open-collections-auto-sync';
 
 async function rescheduleAutoSync() {
   if (!chrome.alarms) return;
@@ -217,7 +217,7 @@ async function rescheduleAutoSync() {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === AUTO_SYNC_ALARM) {
     WebDAV.runSync('sync').catch((e) => {
-      console.error('[OpenPocket] auto sync failed:', e);
+      console.error('[OpenCollections] auto sync failed:', e);
       notifyUI({ type: 'error', message: '自动同步失败：' + e.message });
     });
   }

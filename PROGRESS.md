@@ -1,11 +1,11 @@
-# Open Pocket 开发进度记录
+# Open Collections 开发进度记录
 
 > 最后更新：2026-11-01 · 状态：首版实现与静态/逻辑验证完成，待真实浏览器与真实 WebDAV 联调
 
 ## 状态
 
 - 首版 MVP 的 8 项需求、追加的「独立窗口」与「WebDAV 云同步」均已实现。
-- 产品名统一为 Open Pocket，仓库内无旧名残留；存储 key 保持 `openpocket:*`，无迁移逻辑。
+- 产品名已改为 Open Collections（Edge 集锦的英文名为 Collections，Pocket 容易与 Mozilla Pocket 混淆）；存储 key 仍保持 `openpocket:*` 以保留旧数据，无迁移逻辑。
 - 使用说明与限制见 [README.md](./README.md)。
 
 ## 本轮修复 / 补齐

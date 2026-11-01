@@ -1,4 +1,4 @@
-// app.js — Open Pocket 管理界面逻辑（侧边栏与独立窗口共用）。
+// app.js — Open Collections 管理界面逻辑（侧边栏与独立窗口共用）。
 (function () {
   'use strict';
 
@@ -526,7 +526,7 @@
   async function exportJSON() {
     try {
       const text = await Storage.exportJSON();
-      downloadFile(text, `openpocket-${new Date().toISOString().slice(0, 10)}.json`, 'application/json');
+      downloadFile(text, `open-collections-${new Date().toISOString().slice(0, 10)}.json`, 'application/json');
       toast('已导出 JSON', 'success');
     } catch (e) {
       toast('导出失败：' + (e.message || e), 'error');
@@ -536,7 +536,7 @@
   async function exportHTML() {
     try {
       const text = await Storage.exportBookmarksHTML();
-      downloadFile(text, `openpocket-bookmarks-${new Date().toISOString().slice(0, 10)}.html`, 'text/html');
+      downloadFile(text, `open-collections-bookmarks-${new Date().toISOString().slice(0, 10)}.html`, 'text/html');
       toast('已导出 HTML 书签', 'success');
     } catch (e) {
       toast('导出失败：' + (e.message || e), 'error');
@@ -587,7 +587,7 @@
     $('wd-url').value = w.url || '';
     $('wd-username').value = w.username || '';
     $('wd-password').value = w.password || '';
-    $('wd-remote-dir').value = w.remoteDir || '/openpocket';
+    $('wd-remote-dir').value = w.remoteDir || '/open-collections';
     $('wd-autosync').checked = !!w.autoSync;
     $('wd-interval').value = Number(w.intervalMinutes) || 30;
   }
@@ -598,7 +598,7 @@
         url: $('wd-url').value.trim(),
         username: $('wd-username').value.trim(),
         password: $('wd-password').value,
-        remoteDir: $('wd-remote-dir').value.trim() || '/openpocket',
+        remoteDir: $('wd-remote-dir').value.trim() || '/open-collections',
         autoSync: $('wd-autosync').checked,
         intervalMinutes: Math.max(5, Number($('wd-interval').value) || 30)
       }

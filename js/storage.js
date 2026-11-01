@@ -24,7 +24,7 @@
       try {
         chrome.storage.local.get(STORAGE_KEY, (items) => {
           if (chrome.runtime.lastError) {
-            console.error('[OpenPocket] storage read error:', chrome.runtime.lastError);
+            console.error('[OpenCollections] storage read error:', chrome.runtime.lastError);
             resolve(Utils.clone(DEFAULT_DATA));
             return;
           }
@@ -37,7 +37,7 @@
             try {
               resolve(JSON.parse(raw));
             } catch (e) {
-              console.error('[OpenPocket] data JSON parse failed, using default.', e);
+              console.error('[OpenCollections] data JSON parse failed, using default.', e);
               resolve(Utils.clone(DEFAULT_DATA));
             }
             return;
@@ -45,12 +45,12 @@
           if (typeof raw === 'object') {
             resolve(raw);
           } else {
-            console.error('[OpenPocket] unexpected data type, using default.');
+            console.error('[OpenCollections] unexpected data type, using default.');
             resolve(Utils.clone(DEFAULT_DATA));
           }
         });
       } catch (e) {
-        console.error('[OpenPocket] storage exception:', e);
+        console.error('[OpenCollections] storage exception:', e);
         resolve(Utils.clone(DEFAULT_DATA));
       }
     });
@@ -380,10 +380,10 @@
     const data = await Storage.load();
     const lines = [];
     lines.push('<!DOCTYPE NETSCAPE-Bookmark-file-1>');
-    lines.push('<!-- This is an automatically generated file from Open Pocket. -->');
+    lines.push('<!-- This is an automatically generated file from Open Collections. -->');
     lines.push('<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">');
-    lines.push('<TITLE>Open Pocket 书签导出</TITLE>');
-    lines.push('<H1>Open Pocket 书签</H1>');
+    lines.push('<TITLE>Open Collections 书签导出</TITLE>');
+    lines.push('<H1>Open Collections 书签</H1>');
     lines.push('<DL><p>');
     for (const g of data.groups) {
       if (g.deleted) continue;
@@ -469,7 +469,7 @@
             url: '',
             username: '',
             password: '',
-            remoteDir: '/openpocket',
+            remoteDir: '/open-collections',
             autoSync: false,
             intervalMinutes: 30
           }

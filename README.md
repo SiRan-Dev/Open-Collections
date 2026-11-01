@@ -1,6 +1,6 @@
-# Open Pocket
+# Open Collections
 
-Open Pocket 是一个 Chromium Manifest V3 浏览器扩展，用来替代被砍掉的 Microsoft Edge「集锦（Collections）」：把网页和选中文字收进分组，随时搜索、批量打开、备份与跨设备同步。
+Open Collections 是一个 Chromium Manifest V3 浏览器扩展，用来替代被砍掉的 Microsoft Edge「集锦（Collections）」：把网页和选中文字收进分组，随时搜索、批量打开、备份与跨设备同步。
 
 纯 JavaScript / HTML / CSS，无构建步骤，可直接「加载已解压的扩展程序」。
 
@@ -21,7 +21,7 @@ Open Pocket 是一个 Chromium Manifest V3 浏览器扩展，用来替代被砍�
 1. 打开 `edge://extensions` 或 `chrome://extensions`。
 2. 打开「开发者模式」。
 3. 点「加载已解压的扩展程序」，选择本目录（包含 `manifest.json` 的文件夹）。
-4. 点击工具栏中的 Open Pocket 图标打开侧边栏；若图标被折叠，在扩展菜单里固定它。
+4. 点击工具栏中的 Open Collections 图标打开侧边栏；若图标被折叠，在扩展菜单里固定它。
 
 > 修改代码后，在扩展管理页点该扩展的「重新加载」即可生效；已打开的侧边栏需关闭再打开。
 
@@ -49,10 +49,12 @@ Open Pocket 是一个 Chromium Manifest V3 浏览器扩展，用来替代被砍�
 
 - **服务器地址**：例如 `https://dav.example.com/remote.php/dav/files/yourname`
 - **用户名 / 密码**
-- **远端目录**：默认 `/openpocket`，不存在时会自动 `MKCOL` 创建
+- **远端目录**：默认 `/open-collections`，不存在时会自动 `MKCOL` 创建
 - **定时自动同步**：勾选后可设间隔（最小 5 分钟，`chrome.alarms`）
 
-远端只会有两个位置：上述目录，以及其中的 `openpocket-data.json` 数据文件。
+远端只会有两个位置：上述目录，以及其中的 `open-collections-data.json` 数据文件。
+
+> 如果之前同步过，旧版远端文件名为 `openpocket-data.json`；改名后不会自动读取它。请在服务器上把它重命名为 `open-collections-data.json`，或保留旧目录设置并重新执行一次同步。
 
 **操作语义**
 
@@ -76,7 +78,9 @@ Open Pocket 是一个 Chromium Manifest V3 浏览器扩展，用来替代被砍�
 
 ## 数据存放
 
-全部数据在浏览器 `chrome.storage.local` 中，不上传除非你主动启用 WebDAV：
+全部数据在浏览器 `chrome.storage.local` 中，不上传除非你主动启用 WebDAV。
+
+> 存储 key 沿用旧名 `openpocket:*`，这是为了保留改名前的本地数据，不代表界面品牌；无需迁移。
 
 | Key | 内容 |
 | --- | --- |

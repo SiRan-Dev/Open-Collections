@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const REMOTE_FILE = 'openpocket-data.json';
+  const REMOTE_FILE = 'open-collections-data.json';
 
   function joinUrl(base, path) {
     base = String(base || '').replace(/\/+$/, '');
@@ -12,7 +12,7 @@
   }
 
   function remoteFileUrl(settings) {
-    const dir = (settings.remoteDir || '/openpocket').replace(/^\/+|\/+$/g, '');
+    const dir = (settings.remoteDir || '/open-collections').replace(/^\/+|\/+$/g, '');
     return joinUrl(settings.url, dir + '/' + REMOTE_FILE);
   }
 
@@ -95,7 +95,7 @@
     if (!settings.username) throw { code: 0, message: '请填写用户名' };
     const granted = await ensureHostPermission(settings.url);
     if (!granted) throw { code: 0, message: '需要授权访问该服务器的网络权限' };
-    const dirUrl = joinUrl(settings.url, (settings.remoteDir || '/openpocket').replace(/^\/+|\/+$/g, '') + '/');
+    const dirUrl = joinUrl(settings.url, (settings.remoteDir || '/open-collections').replace(/^\/+|\/+$/g, '') + '/');
     try {
       await davRequest(dirUrl, settings, {
         method: 'PROPFIND',
@@ -144,7 +144,7 @@
     const granted = await ensureHostPermission(settings.url);
     if (!granted) throw { code: 0, message: '需要授权访问该服务器的网络权限' };
     // 先确保目录存在。
-    const dirUrl = joinUrl(settings.url, (settings.remoteDir || '/openpocket').replace(/^\/+|\/+$/g, '') + '/');
+    const dirUrl = joinUrl(settings.url, (settings.remoteDir || '/open-collections').replace(/^\/+|\/+$/g, '') + '/');
     try {
       await davRequest(dirUrl, settings, {
         method: 'PROPFIND',
