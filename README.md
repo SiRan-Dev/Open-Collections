@@ -8,6 +8,7 @@
 ![version](https://img.shields.io/badge/version-1.0.0-2563eb)
 ![manifest](https://img.shields.io/badge/manifest-v3-16a34a)
 ![build](https://img.shields.io/badge/build-none-lightgrey)
+![license](https://img.shields.io/badge/license-GPLv3-blue)
 
 ![主界面](store-assets/01-main.png)
 
@@ -172,7 +173,7 @@ node icons/make-icons.js
 # 详见 RELEASE.md「后续发版流程」
 ```
 
-打包会排除开发文件，只留运行必需的 12 个文件，产物在 `dist/open-collections-<版本>.zip`。
+打包会排除开发文件，只保留运行必需的内容（含 `LICENSE`），产物在 `dist/open-collections-<版本>.zip`。
 
 ### 已验证
 
@@ -186,3 +187,11 @@ node icons/make-icons.js
 ## 致谢
 
 界面图标来自 [Lucide](https://lucide.dev)（ISC 许可证，免费商用），以 inline SVG sprite 内嵌在 `management.html`，颜色跟随 `currentColor`，自动适配明暗主题。
+
+## 许可证
+
+Copyright (C) 2026 SiRan-Dev
+
+本项目以 **GNU General Public License v3.0** 发布，全文见 [LICENSE](./LICENSE)。
+
+你可以自由使用、修改和分发本项目；分发修改后的版本时，需同样以 GPLv3 开源并提供对应源码。

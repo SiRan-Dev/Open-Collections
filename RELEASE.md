@@ -244,7 +244,7 @@ $v = (Get-Content manifest.json -Raw | ConvertFrom-Json).version
 $stage = ".tmp/package"
 Remove-Item -Recurse -Force $stage, "dist" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage, "dist" | Out-Null
-Copy-Item manifest.json, background.js, management.html, management.css -Destination $stage
+Copy-Item manifest.json, background.js, management.html, management.css, LICENSE -Destination $stage
 Copy-Item js -Destination $stage -Recurse
 New-Item -ItemType Directory -Force "$stage/icons" | Out-Null
 Copy-Item icons/icon16.png, icons/icon32.png, icons/icon48.png, icons/icon128.png -Destination "$stage/icons"
