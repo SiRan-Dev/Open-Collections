@@ -83,7 +83,7 @@ Edge 砍掉「集锦」之后，浏览器自带的收藏夹又只适合按文件
   1. 你点「摘录」时，读取当前页面选中的文字
   2. 你启用 WebDAV 时，向你**自己填写的**服务器收发数据
 
-完整政策见 [RELEASE.md 第四节](./RELEASE.md)（可直接发布为公开页面）。
+完整政策见 [隐私政策页面](https://siran-dev.github.io/Open-Collections/)。
 
 ## 数据存放
 

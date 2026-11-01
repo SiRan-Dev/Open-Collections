@@ -119,9 +119,13 @@ collections
 read later
 ```
 
-### 隐私政策 URL
+### 隐私政策 URL（已发布）
 
-必填，需为可公开访问的链接。把下方「四、隐私政策」全文发布到 GitHub Pages、GitHub Gist、Notion 公开页或你自己的站点，再把地址填进 Partner Center。
+```
+https://siran-dev.github.io/Open-Collections/
+```
+
+源文件是 `docs/index.html`，通过 GitHub Pages 发布。修改政策后推送该文件即可自动更新，URL 不用换。
 
 ## 三、权限用途说明（填在认证说明中）
 
@@ -149,7 +153,7 @@ read later
 5. WebDAV 为可选功能，测试连接需要用户自己的 WebDAV 服务器；未配置时其余功能不受影响。
 ```
 
-## 四、隐私政策（全文，可发布为公开页面）
+## 四、隐私政策（全文，已发布为公开页面）
 
 ```markdown
 # Open Collections 隐私政策
@@ -208,10 +212,10 @@ WebDAV 用户名与密码以明文形式保存在本机浏览器存储中（浏�
 
 ## 9. 联系方式
 
-如有疑问，请联系：<在此填写联系邮箱>
+如有疑问，请联系：313007674+SiRan-Dev@users.noreply.github.com
 ```
 
-> 提交前必须把 `<在此填写联系邮箱>` 换成你自己的邮箱，否则审核可能因隐私政策不完整而退回。
+> 以上全文即 `docs/index.html` 的内容，已发布在 https://siran-dev.github.io/Open-Collections/ ，可直接作为商店的隐私政策 URL。
 
 ## 五、上架步骤
 
