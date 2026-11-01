@@ -616,7 +616,7 @@
   async function saveSelection() {
     const granted = await requestPageAccess();
     if (!granted) {
-      toast('未获得页面访问权限，无法读取选区。可在扩展详情中开启站点访问权限后重试', 'error');
+      toast('未获得页面访问权限。可在扩展详情中开启站点访问权限，或在网页上按 Ctrl+Shift+E', 'error');
       return;
     }
     try {
