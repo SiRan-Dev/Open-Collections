@@ -49,6 +49,8 @@ html, body {
 
 /* 顶栏 */
 .topbar {
+  position: relative;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -57,7 +59,7 @@ html, body {
   background: var(--bg);
   flex-shrink: 0;
 }
-.topbar-actions { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.topbar-actions { position: relative; display: flex; gap: 6px; align-items: center; margin-left: auto; }
 
 /* 按钮 */
 .btn {
@@ -94,6 +96,47 @@ html, body {
 }
 .btn-icon:hover { background: var(--bg-hover); color: var(--text); }
 .btn-danger:hover { color: var(--danger); }
+
+/* 收藏拆分按钮与批量菜单 */
+.add-split { display: flex; }
+.add-split-main { border-radius: var(--radius) 0 0 var(--radius); border-right: none; }
+.add-split-caret {
+  border-radius: 0 var(--radius) var(--radius) 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 6px 5px;
+}
+.add-split-caret .ico { font-size: 11px; }
+
+.add-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(252px, calc(100vw - 20px));
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  z-index: 60;
+}
+.add-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.add-menu-item:hover { background: var(--bg-hover); }
+.add-menu-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.add-menu-title { font-size: 13px; font-weight: 600; }
+.add-menu-desc { font-size: 11px; line-height: 1.45; color: var(--text-muted); }
 
 /* 主体布局 */
 .body {
@@ -421,7 +464,15 @@ textarea.text-input { resize: vertical; }
   }
 }
 
+/* 窄屏时缩短主按钮文案，其余按钮文字继续显示，避免左侧留白 */
+.add-split-main .label-short { display: none; }
+@media (max-width: 340px) {
+  .add-split-main .label { display: none; }
+  .add-split-main .label-short { display: inline; }
+}
+
 /* 极窄时收起顶栏按钮文字，只保留图标 */
-@media (max-width: 320px) {
-  .topbar-actions .btn .label { display: none; }
+@media (max-width: 280px) {
+  .topbar-actions .label,
+  .topbar-actions .label-short { display: none; }
 }

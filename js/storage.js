@@ -217,29 +217,37 @@
   };
 
   // ---- 卡片操作 ----
-  Storage.addCard = async function (groupId, cardInput) {
+  Storage.addCards = async function (groupId, cardInputs) {
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId && !x.deleted);
       if (!g) throw new Error('分组不存在');
-      const card = normalizeCard({
-        id: Utils.uuid(),
-        type: cardInput.type || 'page',
-        title: cardInput.title || '无标题',
-        url: cardInput.url || '',
-        favicon: cardInput.favicon || '',
-        notes: cardInput.notes || '',
-        excerpt: cardInput.excerpt || '',
-        sourceTitle: cardInput.sourceTitle || '',
-        sourceUrl: cardInput.sourceUrl || '',
-        addedAt: Utils.now(),
-        updatedAt: Utils.now(),
-        deleted: false,
-        deletedAt: null
+      const cards = (cardInputs || []).map((cardInput) => {
+        const card = normalizeCard({
+          id: Utils.uuid(),
+          type: cardInput.type || 'page',
+          title: cardInput.title || '无标题',
+          url: cardInput.url || '',
+          favicon: cardInput.favicon || '',
+          notes: cardInput.notes || '',
+          excerpt: cardInput.excerpt || '',
+          sourceTitle: cardInput.sourceTitle || '',
+          sourceUrl: cardInput.sourceUrl || '',
+          addedAt: Utils.now(),
+          updatedAt: Utils.now(),
+          deleted: false,
+          deletedAt: null
+        });
+        g.cards.push(card);
+        return card;
       });
-      g.cards.push(card);
-      g.updatedAt = Utils.now();
-      return card;
+      if (cards.length) g.updatedAt = Utils.now();
+      return cards;
     });
+  };
+
+  Storage.addCard = async function (groupId, cardInput) {
+    const cards = await Storage.addCards(groupId, [cardInput]);
+    return cards[0];
   };
 
   Storage.updateCard = async function (groupId, cardId, patch) {

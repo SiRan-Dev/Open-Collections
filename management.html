@@ -17,9 +17,15 @@
         <span class="ico">☰</span>
       </button>
       <div class="topbar-actions">
-        <button id="btn-add-page" class="btn btn-primary" title="将当前页面加入当前分组（Ctrl+Shift+S）">
-          <span class="ico">＋</span><span class="label">添加当前页面</span>
-        </button>
+        <div class="add-split">
+          <button id="btn-add-page" class="btn btn-primary add-split-main" title="将当前页面加入当前分组（Ctrl+Shift+S）">
+            <span class="ico">＋</span><span class="label">添加当前页面</span><span class="label-short">添加</span>
+          </button>
+          <button id="btn-add-menu" class="btn btn-primary add-split-caret" title="更多收藏方式"
+            aria-label="更多收藏方式" aria-haspopup="menu" aria-expanded="false">
+            <span class="ico">▾</span>
+          </button>
+        </div>
         <button id="btn-save-sel" class="btn btn-ghost" title="保存选中文字为摘录（Ctrl+Shift+E）">
           <span class="ico">❝</span><span class="label">摘录</span>
         </button>
@@ -29,6 +35,16 @@
         <button id="btn-settings" class="btn btn-ghost" title="设置 / 导入导出 / 同步">
           <span class="ico">⚙</span>
         </button>
+        <div id="add-menu" class="add-menu hidden" role="menu">
+          <button id="btn-collect-tabs" class="add-menu-item" role="menuitem">
+            <span class="add-menu-title">收藏本窗口标签页</span>
+            <span class="add-menu-desc">加入当前分组，不关闭标签；跳过固定标签与浏览器内部页</span>
+          </button>
+          <button id="btn-collect-close" class="add-menu-item" role="menuitem">
+            <span class="add-menu-title">收藏并关闭标签页</span>
+            <span class="add-menu-desc">收藏后关闭已收藏的标签，保留当前标签与固定标签</span>
+          </button>
+        </div>
       </div>
     </header>
 

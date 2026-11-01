@@ -76,6 +76,60 @@ async function addCurrentPage() {
   return tab.title || tab.url;
 }
 
+// ---- 收藏当前窗口的标签页（OneTab 式批量收集）----
+function isCollectibleTab(tab) {
+  // 固定标签与浏览器内部页不参与。
+  return !!tab && !tab.pinned && /^https?:/i.test(tab.url || '');
+}
+
+async function getCollectWindow() {
+  try {
+    const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'], populate: true });
+    if (win && Array.isArray(win.tabs)) return win;
+  } catch (e) {
+    console.warn('[OpenCollections] getLastFocused failed:', e);
+  }
+  // 回退：以最后聚焦的活动标签所在窗口为准。
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab) return null;
+  const tabs = await chrome.tabs.query({ windowId: tab.windowId });
+  return { id: tab.windowId, tabs };
+}
+
+async function collectWindowTabs(closeAfter) {
+  const groupId = await Storage.getActiveGroupId();
+  if (!groupId) throw new Error('请先创建一个分组');
+
+  const win = await getCollectWindow();
+  if (!win) throw new Error('无法获取当前窗口的标签页');
+
+  const targets = (win.tabs || []).filter(isCollectibleTab);
+  if (!targets.length) throw new Error('当前窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
+
+  const cards = targets.map((tab) => ({
+    type: 'page',
+    title: tab.title || tab.url,
+    url: tab.url,
+    favicon: faviconUrlFor(tab.url)
+  }));
+  await Storage.addCards(groupId, cards);
+
+  let closed = 0;
+  if (closeAfter) {
+    // 保留当前活动标签，避免侧边栏随之关闭。
+    const activeId = (win.tabs.find((t) => t.active) || {}).id;
+    const ids = targets.filter((t) => t.id !== activeId).map((t) => t.id);
+    if (ids.length) {
+      await chrome.tabs.remove(ids);
+      closed = ids.length;
+    }
+  }
+
+  const data = await Storage.load();
+  const group = data.groups.find((g) => g.id === groupId);
+  return { added: cards.length, closed, groupName: group ? group.name : '' };
+}
+
 // ---- 保存选中文字为摘录卡片 ----
 async function saveSelection() {
   const tab = await getActiveTab();
@@ -169,6 +223,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'save-selection':
       saveSelection()
         .then((len) => sendResponse({ ok: true, result: { message: `摘录已保存（${len} 字）` } }))
+        .catch((e) => sendResponse({ ok: false, error: e.message }));
+      return true;
+    case 'collect-window-tabs':
+      collectWindowTabs(!!msg.close)
+        .then((result) => sendResponse({ ok: true, result }))
         .catch((e) => sendResponse({ ok: false, error: e.message }));
       return true;
     case 'open-window':

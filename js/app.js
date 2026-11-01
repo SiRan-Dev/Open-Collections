@@ -18,6 +18,10 @@
     els.btnToggleGroups = $('btn-toggle-groups');
     els.groupsBackdrop = $('groups-backdrop');
     els.btnGroupColor = $('btn-group-color');
+    els.btnAddMenu = $('btn-add-menu');
+    els.addMenu = $('add-menu');
+    els.btnCollectTabs = $('btn-collect-tabs');
+    els.btnCollectClose = $('btn-collect-close');
     els.groupList = $('group-list');
     els.groupHead = $('group-head');
     els.groupColorDot = $('group-color-dot');
@@ -529,6 +533,28 @@
     }
   }
 
+  // ---- 批量收藏当前窗口标签页 ----
+  function setAddMenuOpen(open) {
+    els.addMenu.classList.toggle('hidden', !open);
+    els.btnAddMenu.setAttribute('aria-expanded', String(open));
+  }
+
+  async function collectWindowTabs(closeAfter) {
+    setAddMenuOpen(false);
+    try {
+      const res = await sendMessage({ type: 'collect-window-tabs', close: closeAfter });
+      const r = res.result || {};
+      if (closeAfter) {
+        toast(`已收藏 ${r.added} 个标签页，关闭 ${r.closed} 个`, 'success');
+      } else {
+        toast(`已将 ${r.added} 个标签页收进「${r.groupName}」`, 'success');
+      }
+      await loadAndRender();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
   async function saveSelection() {
     try {
       const res = await sendMessage({ type: 'save-selection' });
@@ -741,6 +767,12 @@
     els.groupNameInput.addEventListener('blur', renameGroupFromInput);
 
     $('btn-add-page').addEventListener('click', addCurrentPage);
+    els.btnAddMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setAddMenuOpen(els.addMenu.classList.contains('hidden'));
+    });
+    els.btnCollectTabs.addEventListener('click', () => collectWindowTabs(false));
+    els.btnCollectClose.addEventListener('click', () => collectWindowTabs(true));
     $('btn-save-sel').addEventListener('click', saveSelection);
     $('btn-window').addEventListener('click', openWindow);
     $('btn-settings').addEventListener('click', () => openDrawer('settings'));
@@ -785,8 +817,13 @@
     document.querySelectorAll('[data-close]').forEach((el) => {
       el.addEventListener('click', () => closeDrawer(el.dataset.close));
     });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('.add-split') || e.target.closest('.add-menu')) return;
+      setAddMenuOpen(false);
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        setAddMenuOpen(false);
         closeDrawer('settings');
         closeDrawer('editor');
       }
