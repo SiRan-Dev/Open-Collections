@@ -1,0 +1,7 @@
+# 编辑器 / 工具生成的临时产物
+.trae-html-share-packages/
+node_modules/
+*.log
+
+# 测试用临时文件（若有）
+.tmp/

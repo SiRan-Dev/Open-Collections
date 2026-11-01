@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Open Pocket</title>
+  <link rel="stylesheet" href="management.css" />
+</head>
+
+<body>
+  <div id="app" class="app">
+    <!-- 顶栏 -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span class="brand-name">Open Pocket</span>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-add-page" class="btn btn-primary" title="将当前页面加入当前分组（Ctrl+Shift+S）">
+          <span class="ico">＋</span> 添加当前页面
+        </button>
+        <button id="btn-save-sel" class="btn btn-ghost" title="保存选中文字为摘录（Ctrl+Shift+E）">
+          <span class="ico">❝</span> 摘录
+        </button>
+        <button id="btn-window" class="btn btn-ghost" title="在独立窗口中打开">
+          <span class="ico">▢</span>
+        </button>
+        <button id="btn-settings" class="btn btn-ghost" title="设置 / 导入导出 / 同步">
+          <span class="ico">⚙</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="body">
+      <!-- 分组列表 -->
+      <aside class="groups-panel">
+        <div class="groups-head">
+          <span>分组</span>
+          <button id="btn-new-group" class="btn-icon" title="新建分组">＋</button>
+        </div>
+        <ul id="group-list" class="group-list"></ul>
+      </aside>
+
+      <!-- 主内容 -->
+      <main class="main-panel">
+        <div id="group-head" class="group-head hidden">
+          <div class="group-title-row">
+            <span id="group-color-dot" class="group-color-dot"></span>
+            <input id="group-name-input" class="group-name-input" type="text" maxlength="40" />
+            <div class="group-actions">
+              <button id="btn-group-color" class="btn-icon" title="修改颜色">🎨</button>
+              <button id="btn-open-all" class="btn btn-ghost btn-sm" title="在新标签页批量打开本分组">全部打开</button>
+              <button id="btn-delete-group" class="btn-icon btn-danger" title="删除分组">🗑</button>
+            </div>
+          </div>
+          <div class="group-meta" id="group-meta"></div>
+        </div>
+
+        <!-- 颜色选择器 -->
+        <div id="color-picker" class="color-picker hidden"></div>
+
+        <!-- 搜索 -->
+        <div class="search-row">
+          <input id="search-input" class="search-input" type="search" placeholder="搜索标题、URL、笔记、摘录…" />
+          <span id="search-count" class="search-count"></span>
+        </div>
+
+        <!-- 卡片列表 -->
+        <ul id="card-list" class="card-list"></ul>
+
+        <!-- 空状态 -->
+        <div id="empty-state" class="empty-state hidden">
+          <div class="empty-icon">📂</div>
+          <div class="empty-title">这里还没有内容</div>
+          <div class="empty-desc">点击「添加当前页面」或使用快捷键 Ctrl+Shift+S 把网页收藏进来。</div>
+          <button id="empty-action" class="btn btn-primary hidden">新建分组</button>
+        </div>
+
+        <!-- 加载状态 -->
+        <div id="loading-state" class="loading-state">
+          <div class="spinner"></div>
+          <div>加载中…</div>
+        </div>
+
+        <!-- 错误状态 -->
+        <div id="error-state" class="error-state hidden">
+          <div class="error-icon">⚠</div>
+          <div class="error-title">出了点问题</div>
+          <div id="error-msg" class="error-msg"></div>
+          <button id="btn-retry" class="btn btn-ghost">重试</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- 设置抽屉 -->
+  <div id="settings-drawer" class="drawer hidden">
+    <div class="drawer-mask" data-close="settings"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <h2>设置</h2>
+        <button class="btn-icon" data-close="settings">✕</button>
+      </div>
+      <div class="drawer-body">
+        <section class="settings-section">
+          <h3>数据导入 / 导出</h3>
+          <div class="settings-actions">
+            <button id="btn-export-json" class="btn btn-ghost">导出 JSON</button>
+            <button id="btn-import-json" class="btn btn-ghost">导入 JSON（合并）</button>
+            <button id="btn-import-json-overwrite" class="btn btn-ghost">导入 JSON（覆盖）</button>
+            <button id="btn-export-html" class="btn btn-ghost">导出 HTML 书签</button>
+          </div>
+          <input id="file-import" type="file" accept="application/json,.json" class="hidden" />
+          <p class="hint">覆盖导入会先自动备份当前数据到本地存储。合并导入按条目 ID 冲突时取较新者。</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>WebDAV 云同步</h3>
+          <p class="hint warning">
+            账号密码以明文形式保存在本地 chrome.storage 中，不会上传给任何第三方（仅用于向你自己的 WebDAV 服务器认证）。
+            若担心本机泄密，请不要启用，或使用专用密码。
+          </p>
+          <div class="form-row">
+            <label>服务器地址</label>
+            <input id="wd-url" class="text-input" type="text"
+              placeholder="https://dav.example.com/remote.php/dav/files/user" />
+          </div>
+          <div class="form-row">
+            <label>用户名</label>
+            <input id="wd-username" class="text-input" type="text" />
+          </div>
+          <div class="form-row">
+            <label>密码</label>
+            <input id="wd-password" class="text-input" type="password" />
+          </div>
+          <div class="form-row">
+            <label>远端目录</label>
+            <input id="wd-remote-dir" class="text-input" type="text" placeholder="/openpocket" />
+          </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="wd-autosync" type="checkbox" />
+              启用定时自动同步
+            </label>
+          </div>
+          <div class="form-row">
+            <label>同步间隔（分钟，最小 5）</label>
+            <input id="wd-interval" class="text-input" type="number" min="5" value="30" />
+          </div>
+          <div class="settings-actions">
+            <button id="btn-wd-save" class="btn btn-primary">保存设置</button>
+            <button id="btn-wd-test" class="btn btn-ghost">测试连接</button>
+            <button id="btn-wd-sync" class="btn btn-ghost">立即同步</button>
+            <button id="btn-wd-upload" class="btn btn-ghost">仅上传</button>
+            <button id="btn-wd-download" class="btn btn-ghost">仅下载</button>
+          </div>
+          <div id="wd-status" class="wd-status"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3>关于</h3>
+          <p class="hint">Open Pocket v0.1.0 · 本地集锦管理。数据存放于浏览器 chrome.storage.local。</p>
+          <p class="hint">快捷键：Ctrl+Shift+S 收藏页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开侧边栏。</p>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通知 toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- 编辑卡片浮层 -->
+  <div id="card-editor" class="drawer hidden">
+    <div class="drawer-mask" data-close="editor"></div>
+    <div class="drawer-panel narrow">
+      <div class="drawer-head">
+        <h2>编辑卡片</h2>
+        <button class="btn-icon" data-close="editor">✕</button>
+      </div>
+      <div class="drawer-body">
+        <div class="form-row">
+          <label>标题</label>
+          <input id="edit-title" class="text-input" type="text" maxlength="200" />
+        </div>
+        <div class="form-row" id="edit-url-row">
+          <label>链接</label>
+          <input id="edit-url" class="text-input" type="url" />
+        </div>
+        <div class="form-row" id="edit-excerpt-row">
+          <label>摘录内容</label>
+          <textarea id="edit-excerpt" class="text-input" rows="6" readonly></textarea>
+        </div>
+        <div class="form-row">
+          <label>笔记 / 备注</label>
+          <textarea id="edit-notes" class="text-input" rows="5" placeholder="可在此添加备注…"></textarea>
+        </div>
+        <div class="form-row form-inline">
+          <button id="btn-save-card" class="btn btn-primary">保存</button>
+          <button id="btn-delete-card" class="btn btn-ghost btn-danger-text">删除卡片</button>
+          <button id="btn-open-card" class="btn btn-ghost">打开原链接</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/utils.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/webdav.js"></script>
+  <script src="js/app.js"></script>
+</body>
+
+</html>
