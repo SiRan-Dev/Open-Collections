@@ -9,31 +9,50 @@
 </head>
 
 <body>
+  <!-- 界面图标：Lucide（https://lucide.dev，ISC 许可，免费商用），内联 sprite，颜色跟随 currentColor -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-panel-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-quote" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></symbol>
+    <symbol id="i-app-window" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></symbol>
+    <symbol id="i-grip-vertical" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></symbol>
+    <symbol id="i-file-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+    <symbol id="i-folder-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  </svg>
+
   <div id="app" class="app">
     <!-- 顶栏 -->
     <header class="topbar">
       <button id="btn-toggle-groups" class="btn btn-ghost btn-icon" title="折叠分组栏"
         aria-label="折叠分组栏" aria-expanded="true">
-        <span class="ico">☰</span>
+        <svg class="ico" aria-hidden="true"><use href="#i-panel-left"/></svg>
       </button>
       <div class="topbar-actions">
         <div class="add-split">
           <button id="btn-add-page" class="btn btn-primary add-split-main" title="将当前页面加入当前分组（Ctrl+Shift+S）">
-            <span class="ico">＋</span><span class="label">添加当前页面</span><span class="label-short">添加</span>
+            <svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">添加当前页面</span><span class="label-short">添加</span>
           </button>
           <button id="btn-add-menu" class="btn btn-primary add-split-caret" title="更多收藏方式"
             aria-label="更多收藏方式" aria-haspopup="menu" aria-expanded="false">
-            <span class="ico">▾</span>
+            <svg class="ico" aria-hidden="true"><use href="#i-chevron-down"/></svg>
           </button>
         </div>
         <button id="btn-save-sel" class="btn btn-ghost" title="保存选中文字为摘录（Ctrl+Shift+E）">
-          <span class="ico">❝</span><span class="label">摘录</span>
+          <svg class="ico" aria-hidden="true"><use href="#i-quote"/></svg><span class="label">摘录</span>
         </button>
         <button id="btn-window" class="btn btn-ghost" title="在独立窗口中打开">
-          <span class="ico">▢</span>
+          <svg class="ico" aria-hidden="true"><use href="#i-app-window"/></svg>
         </button>
         <button id="btn-settings" class="btn btn-ghost" title="设置 / 导入导出 / 同步">
-          <span class="ico">⚙</span>
+          <svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg>
         </button>
         <div id="add-menu" class="add-menu hidden" role="menu">
           <button id="btn-collect-tabs" class="add-menu-item" role="menuitem">
@@ -54,8 +73,8 @@
         <div class="groups-head">
           <span>分组</span>
           <div class="groups-head-actions">
-            <button id="btn-group-color" class="btn-icon" title="修改当前分组颜色" aria-label="修改当前分组颜色">🎨</button>
-            <button id="btn-new-group" class="btn-icon" title="新建分组">＋</button>
+            <button id="btn-group-color" class="btn-icon" title="修改当前分组颜色" aria-label="修改当前分组颜色"><svg class="ico" aria-hidden="true"><use href="#i-palette"/></svg></button>
+            <button id="btn-new-group" class="btn-icon" title="新建分组"><svg class="ico" aria-hidden="true"><use href="#i-folder-plus"/></svg></button>
           </div>
         </div>
         <div id="color-picker" class="color-picker hidden"></div>
@@ -71,7 +90,7 @@
             <input id="group-name-input" class="group-name-input" type="text" maxlength="40" />
             <div class="group-actions">
               <button id="btn-open-all" class="btn btn-ghost btn-sm" title="在新标签页批量打开本分组">全部打开</button>
-              <button id="btn-delete-group" class="btn-icon btn-danger" title="删除分组">🗑</button>
+              <button id="btn-delete-group" class="btn-icon btn-danger" title="删除分组"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg></button>
             </div>
           </div>
           <div class="group-meta" id="group-meta"></div>
@@ -88,7 +107,7 @@
 
         <!-- 空状态 -->
         <div id="empty-state" class="empty-state hidden">
-          <div class="empty-icon">📂</div>
+          <svg class="empty-icon" aria-hidden="true"><use href="#i-folder-open"/></svg>
           <div class="empty-title">这里还没有内容</div>
           <div class="empty-desc">点击「添加当前页面」或使用快捷键 Ctrl+Shift+S 把网页收藏进来。</div>
           <button id="empty-action" class="btn btn-primary hidden">新建分组</button>
@@ -102,7 +121,7 @@
 
         <!-- 错误状态 -->
         <div id="error-state" class="error-state hidden">
-          <div class="error-icon">⚠</div>
+          <svg class="error-icon" aria-hidden="true"><use href="#i-alert"/></svg>
           <div class="error-title">出了点问题</div>
           <div id="error-msg" class="error-msg"></div>
           <button id="btn-retry" class="btn btn-ghost">重试</button>
@@ -117,7 +136,7 @@
     <div class="drawer-panel">
       <div class="drawer-head">
         <h2>设置</h2>
-        <button class="btn-icon" data-close="settings">✕</button>
+        <button class="btn-icon" data-close="settings" aria-label="关闭设置"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="drawer-body">
         <section class="settings-section">
@@ -193,7 +212,7 @@
     <div class="drawer-panel narrow">
       <div class="drawer-head">
         <h2>编辑卡片</h2>
-        <button class="btn-icon" data-close="editor">✕</button>
+        <button class="btn-icon" data-close="editor" aria-label="关闭编辑"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="drawer-body">
         <div class="form-row">

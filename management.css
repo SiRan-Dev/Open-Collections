@@ -97,6 +97,10 @@ html, body {
 .btn-icon:hover { background: var(--bg-hover); color: var(--text); }
 .btn-danger:hover { color: var(--danger); }
 
+/* 图标（Lucide 内联 SVG，颜色继承 currentColor） */
+.ico { width: 16px; height: 16px; flex: none; display: block; }
+.btn-icon .ico { width: 16px; height: 16px; }
+
 /* 收藏拆分按钮与批量菜单 */
 .add-split { display: flex; }
 .add-split-main { border-radius: var(--radius) 0 0 var(--radius); border-right: none; }
@@ -105,7 +109,7 @@ html, body {
   border-left: 1px solid rgba(255, 255, 255, 0.35);
   padding: 6px 5px;
 }
-.add-split-caret .ico { font-size: 11px; }
+.add-split-caret .ico { width: 12px; height: 12px; }
 
 .add-menu {
   position: absolute;
@@ -300,7 +304,8 @@ html, body {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.card-notes { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.card-notes { font-size: 11px; color: var(--text-muted); font-style: italic; display: flex; align-items: center; gap: 4px; }
+.card-notes svg { width: 12px; height: 12px; flex: none; }
 .card-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .card-time { font-size: 11px; color: var(--text-muted); }
 .card-tag {
@@ -315,6 +320,8 @@ html, body {
   color: var(--text-muted); cursor: grab; padding: 0 4px;
   align-self: stretch; display: flex; align-items: center;
 }
+.card-handle svg { width: 14px; height: 14px; }
+.card-edit svg, .card-delete svg { width: 14px; height: 14px; }
 .card-edit, .card-delete {
   position: absolute;
   top: 6px;
@@ -353,7 +360,7 @@ html, body {
   gap: 8px;
   padding: 40px 20px;
 }
-.empty-icon { font-size: 40px; }
+.empty-icon { width: 44px; height: 44px; color: var(--text-muted); opacity: .75; }
 .empty-title { font-size: 15px; font-weight: 600; color: var(--text); }
 .empty-desc { font-size: 12px; max-width: 280px; }
 .spinner {
@@ -363,7 +370,7 @@ html, body {
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.error-icon { font-size: 32px; color: var(--danger); }
+.error-icon { width: 32px; height: 32px; color: var(--danger); }
 .error-title { font-size: 15px; font-weight: 600; color: var(--text); }
 .error-msg { font-size: 12px; max-width: 320px; }
 

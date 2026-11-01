@@ -13,6 +13,16 @@
   const $ = (id) => document.getElementById(id);
   const els = {};
 
+  // 创建内联 SVG 图标（symbol 定义在 management.html 的 sprite 中，Lucide/ISC）。
+  function iconSvg(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#i-' + name);
+    svg.appendChild(use);
+    return svg;
+  }
+
   function cacheEls() {
     els.app = $('app');
     els.btnToggleGroups = $('btn-toggle-groups');
@@ -251,7 +261,7 @@
     const handle = document.createElement('span');
     handle.className = 'card-handle';
     handle.title = searching ? '搜索状态下不能拖拽排序' : '拖拽排序';
-    handle.textContent = '⋮⋮';
+    handle.appendChild(iconSvg('grip-vertical'));
     li.appendChild(handle);
 
     // favicon：优先扩展内置 _favicon，失败退回首字母色块。
@@ -295,7 +305,8 @@
     if (c.notes) {
       const n = document.createElement('div');
       n.className = 'card-notes';
-      n.textContent = '📝 ' + Utils.truncate(c.notes, 80);
+      n.appendChild(iconSvg('file-text'));
+      n.appendChild(document.createTextNode(Utils.truncate(c.notes, 80)));
       body.appendChild(n);
     }
 
@@ -322,7 +333,7 @@
     const editBtn = document.createElement('button');
     editBtn.className = 'card-edit';
     editBtn.title = '编辑标题 / 备注';
-    editBtn.textContent = '✎';
+    editBtn.appendChild(iconSvg('pencil'));
     editBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       openCardEditor(group.id, c.id);
@@ -332,7 +343,7 @@
     const delBtn = document.createElement('button');
     delBtn.className = 'card-delete';
     delBtn.title = '删除卡片';
-    delBtn.textContent = '🗑';
+    delBtn.appendChild(iconSvg('trash'));
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       deleteCardQuick(group.id, c.id);

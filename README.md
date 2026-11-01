@@ -17,6 +17,8 @@ Open Collections 是一个 Chromium Manifest V3 浏览器扩展，用来替代�
 - **导入导出**：JSON 完整备份（合并 / 覆盖导入）、Netscape HTML 书签导出（可导入浏览器收藏夹）。
 - **WebDAV 云同步**：测试连接、立即同步、仅上传、仅下载，可选定时自动同步。
 
+界面图标使用 [Lucide](https://lucide.dev) 图标库（ISC 许可，免费商用），以 inline SVG sprite 内嵌在 `management.html` 中，颜色跟随 `currentColor`，自动适配明暗主题。
+
 ## 安装 / 加载
 
 1. 打开 `edge://extensions` 或 `chrome://extensions`。
