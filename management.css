@@ -51,19 +51,13 @@ html, body {
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
 }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
-.brand-dot {
-  width: 14px; height: 14px; border-radius: 50%;
-  background: var(--primary);
-  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.4);
-}
-.topbar-actions { display: flex; gap: 6px; align-items: center; }
+.topbar-actions { display: flex; gap: 6px; align-items: center; margin-left: auto; }
 
 /* 按钮 */
 .btn {
@@ -77,6 +71,7 @@ html, body {
   border-radius: var(--radius);
   cursor: pointer;
   font-size: 13px;
+  white-space: nowrap;
   transition: background .15s, border-color .15s;
 }
 .btn:hover { background: var(--bg-hover); }
@@ -102,6 +97,7 @@ html, body {
 
 /* 主体布局 */
 .body {
+  position: relative;
   display: flex;
   flex: 1;
   overflow: hidden;
@@ -116,12 +112,15 @@ html, body {
   flex-direction: column;
   flex-shrink: 0;
 }
+.app.groups-collapsed .groups-panel { display: none; }
+.groups-backdrop { display: none; }
 .groups-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 12px;
   font-size: 12px; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: .05em;
 }
+.groups-head-actions { display: flex; align-items: center; gap: 2px; }
 .group-list {
   list-style: none; margin: 0; padding: 4px 8px;
   overflow-y: auto; flex: 1;
@@ -187,9 +186,10 @@ html, body {
 
 .color-picker {
   display: flex; flex-wrap: wrap; gap: 6px;
-  padding: 8px; background: var(--bg-soft);
+  margin: 0 8px 6px;
+  padding: 7px;
+  background: var(--bg);
   border: 1px solid var(--border); border-radius: 8px;
-  width: fit-content;
 }
 .color-swatch {
   width: 22px; height: 22px; border-radius: 50%;
@@ -397,9 +397,31 @@ textarea.text-input { resize: vertical; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* 窄屏（侧边栏）适配 */
-@media (max-width: 420px) {
-  .groups-panel { width: 130px; }
-  .topbar-actions .btn span:not(.ico) { display: none; }
-  .topbar-actions .btn { padding: 6px 8px; }
+/* 窄屏（侧边栏 / 小窗口）适配：分组栏收窄为浮层，避免挤压主内容 */
+@media (max-width: 520px) {
+  .topbar { padding: 8px 10px; gap: 6px; }
+  .topbar-actions { gap: 4px; }
+  .main-panel { padding: 12px; }
+
+  .app:not(.groups-collapsed) .groups-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: rgba(0, 0, 0, 0.28);
+  }
+  .app:not(.groups-collapsed) .groups-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 200px;
+    z-index: 30;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18);
+  }
+}
+
+/* 极窄时收起顶栏按钮文字，只保留图标 */
+@media (max-width: 320px) {
+  .topbar-actions .btn .label { display: none; }
 }

@@ -12,16 +12,16 @@
   <div id="app" class="app">
     <!-- 顶栏 -->
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <span class="brand-name">Open Collections</span>
-      </div>
+      <button id="btn-toggle-groups" class="btn btn-ghost btn-icon" title="折叠分组栏"
+        aria-label="折叠分组栏" aria-expanded="true">
+        <span class="ico">☰</span>
+      </button>
       <div class="topbar-actions">
         <button id="btn-add-page" class="btn btn-primary" title="将当前页面加入当前分组（Ctrl+Shift+S）">
-          <span class="ico">＋</span> 添加当前页面
+          <span class="ico">＋</span><span class="label">添加当前页面</span>
         </button>
         <button id="btn-save-sel" class="btn btn-ghost" title="保存选中文字为摘录（Ctrl+Shift+E）">
-          <span class="ico">❝</span> 摘录
+          <span class="ico">❝</span><span class="label">摘录</span>
         </button>
         <button id="btn-window" class="btn btn-ghost" title="在独立窗口中打开">
           <span class="ico">▢</span>
@@ -37,10 +37,15 @@
       <aside class="groups-panel">
         <div class="groups-head">
           <span>分组</span>
-          <button id="btn-new-group" class="btn-icon" title="新建分组">＋</button>
+          <div class="groups-head-actions">
+            <button id="btn-group-color" class="btn-icon" title="修改当前分组颜色" aria-label="修改当前分组颜色">🎨</button>
+            <button id="btn-new-group" class="btn-icon" title="新建分组">＋</button>
+          </div>
         </div>
+        <div id="color-picker" class="color-picker hidden"></div>
         <ul id="group-list" class="group-list"></ul>
       </aside>
+      <div id="groups-backdrop" class="groups-backdrop"></div>
 
       <!-- 主内容 -->
       <main class="main-panel">
@@ -49,16 +54,12 @@
             <span id="group-color-dot" class="group-color-dot"></span>
             <input id="group-name-input" class="group-name-input" type="text" maxlength="40" />
             <div class="group-actions">
-              <button id="btn-group-color" class="btn-icon" title="修改颜色">🎨</button>
               <button id="btn-open-all" class="btn btn-ghost btn-sm" title="在新标签页批量打开本分组">全部打开</button>
               <button id="btn-delete-group" class="btn-icon btn-danger" title="删除分组">🗑</button>
             </div>
           </div>
           <div class="group-meta" id="group-meta"></div>
         </div>
-
-        <!-- 颜色选择器 -->
-        <div id="color-picker" class="color-picker hidden"></div>
 
         <!-- 搜索 -->
         <div class="search-row">

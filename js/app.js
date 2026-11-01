@@ -14,6 +14,10 @@
   const els = {};
 
   function cacheEls() {
+    els.app = $('app');
+    els.btnToggleGroups = $('btn-toggle-groups');
+    els.groupsBackdrop = $('groups-backdrop');
+    els.btnGroupColor = $('btn-group-color');
     els.groupList = $('group-list');
     els.groupHead = $('group-head');
     els.groupColorDot = $('group-color-dot');
@@ -92,6 +96,23 @@
     return state.data.groups.find((g) => g.id === state.data.activeGroupId && !g.deleted) || null;
   }
 
+  // ---- 分组栏折叠 ----
+  // 窄屏（侧边栏）默认折叠，宽屏默认展开；手动切换在跨越断点前保持。
+  const NARROW_QUERY = window.matchMedia('(max-width: 520px)');
+
+  function setGroupsFolded(folded) {
+    els.app.classList.toggle('groups-collapsed', folded);
+    if (folded) els.colorPicker.classList.add('hidden');
+    const label = folded ? '展开分组栏' : '折叠分组栏';
+    els.btnToggleGroups.setAttribute('aria-expanded', String(!folded));
+    els.btnToggleGroups.setAttribute('aria-label', label);
+    els.btnToggleGroups.title = label;
+  }
+
+  function toggleGroups() {
+    setGroupsFolded(!els.app.classList.contains('groups-collapsed'));
+  }
+
   function render() {
     renderGroups();
     renderActiveGroup();
@@ -115,6 +136,8 @@
         state.data.activeGroupId = g.id;
         await Storage.setActiveGroup(g.id);
         render();
+        // 窄屏下分组栏是浮层，选中后自动收起。
+        if (NARROW_QUERY.matches) setGroupsFolded(true);
       });
       els.groupList.appendChild(li);
     }
@@ -122,7 +145,9 @@
 
   function renderActiveGroup() {
     const g = getActiveGroup();
+    els.btnGroupColor.classList.toggle('hidden', !g);
     if (!g) {
+      els.colorPicker.classList.add('hidden');
       els.groupHead.classList.add('hidden');
       return;
     }
@@ -703,9 +728,13 @@
 
   // ---- 事件绑定 ----
   function bindEvents() {
+    els.btnToggleGroups.addEventListener('click', toggleGroups);
+    els.groupsBackdrop.addEventListener('click', () => setGroupsFolded(true));
+    NARROW_QUERY.addEventListener('change', (e) => setGroupsFolded(e.matches));
+
     $('btn-new-group').addEventListener('click', createGroup);
     els.emptyAction.addEventListener('click', createGroup);
-    $('btn-group-color').addEventListener('click', () => els.colorPicker.classList.toggle('hidden'));
+    els.btnGroupColor.addEventListener('click', () => els.colorPicker.classList.toggle('hidden'));
     $('btn-delete-group').addEventListener('click', deleteActiveGroup);
     $('btn-open-all').addEventListener('click', openAllInGroup);
     els.groupNameInput.addEventListener('change', renameGroupFromInput);
@@ -783,6 +812,7 @@
   // ---- 启动 ----
   function init() {
     cacheEls();
+    setGroupsFolded(NARROW_QUERY.matches);
     bindEvents();
     loadAndRender();
   }
