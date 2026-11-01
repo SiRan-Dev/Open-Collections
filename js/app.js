@@ -329,9 +329,20 @@
     });
     li.appendChild(editBtn);
 
+    const delBtn = document.createElement('button');
+    delBtn.className = 'card-delete';
+    delBtn.title = '删除卡片';
+    delBtn.textContent = '🗑';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteCardQuick(group.id, c.id);
+    });
+    li.appendChild(delBtn);
+
     // 单击卡片直接打开原链接（摘录打开来源页）。
     li.addEventListener('click', (e) => {
-      if (e.target.closest('.card-handle') || e.target.closest('.card-edit')) return;
+      if (e.target.closest('.card-handle') || e.target.closest('.card-edit') ||
+        e.target.closest('.card-delete')) return;
       openCardLink(c);
     });
 
@@ -432,6 +443,17 @@
       await Storage.deleteCard(state.editingGroupId, state.editingCardId);
       toast('已删除', 'success');
       closeDrawer('editor');
+      await loadAndRender();
+    } catch (e) {
+      toast('删除失败：' + (e.message || e), 'error');
+    }
+  }
+
+  async function deleteCardQuick(groupId, cardId) {
+    if (!confirm('确定删除这张卡片吗？')) return;
+    try {
+      await Storage.deleteCard(groupId, cardId);
+      toast('已删除', 'success');
       await loadAndRender();
     } catch (e) {
       toast('删除失败：' + (e.message || e), 'error');

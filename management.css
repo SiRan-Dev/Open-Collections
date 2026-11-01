@@ -315,22 +315,28 @@ html, body {
   color: var(--text-muted); cursor: grab; padding: 0 4px;
   align-self: stretch; display: flex; align-items: center;
 }
-.card-edit {
+.card-edit, .card-delete {
   position: absolute;
-  top: 6px; right: 6px;
+  top: 6px;
   width: 26px; height: 26px;
   border: none; border-radius: 6px;
   background: var(--bg-soft);
   color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity .12s, background .12s;
+  transition: opacity .12s, background .12s, color .12s;
   font-size: 13px;
   line-height: 1;
 }
+.card-edit { right: 6px; }
+.card-delete { right: 36px; }
 .card:hover .card-edit,
-.card-edit:focus { opacity: 1; }
-.card-edit:hover { background: var(--bg-hover); color: var(--text); }
+.card:hover .card-delete,
+.card-edit:focus,
+.card-delete:focus { opacity: 1; }
+.card-edit:hover,
+.card-delete:hover { background: var(--bg-hover); color: var(--text); }
+.card-delete:hover { color: var(--danger); }
 .card-tag.group-badge {
   max-width: 110px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
