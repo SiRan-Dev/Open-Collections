@@ -612,9 +612,10 @@
 
       let closed = 0;
       if (closeAfter) {
-        // 保留当前活动标签，避免侧边栏随之关闭。
-        const activeId = (win.tabs.find((t) => t.active) || {}).id;
-        const ids = targets.filter((t) => t.id !== activeId).map((t) => t.id);
+        // 先开一个新标签页接管窗口（侧边栏跟随窗口而非标签），
+        // 再关闭全部已收藏标签，包括当前页。
+        await chrome.tabs.create({ active: true });
+        const ids = targets.map((t) => t.id);
         if (ids.length) {
           await chrome.tabs.remove(ids);
           closed = ids.length;
@@ -622,7 +623,7 @@
       }
 
       if (closeAfter) {
-        toast(`已收藏 ${targets.length} 个标签页，关闭 ${closed} 个`, 'success');
+        toast(`已收藏并关闭 ${closed} 个标签页`, 'success');
       } else {
         toast(`已将 ${targets.length} 个标签页收进「${group.name}」`, 'success');
       }
