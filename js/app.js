@@ -136,25 +136,45 @@
   function renderGroups() {
     const groups = (state.data.groups || []).filter((g) => !g.deleted);
     els.groupList.innerHTML = '';
-    for (const g of groups) {
-      const li = document.createElement('li');
-      li.className = 'group-item' + (g.id === state.data.activeGroupId ? ' active' : '');
-      li.dataset.id = g.id;
-      const aliveCards = g.cards.filter((c) => !c.deleted).length;
-      li.innerHTML = `
-        <span class="group-dot" style="background:${Utils.escapeHtml(g.color)}"></span>
-        <span class="group-name">${Utils.escapeHtml(g.name)}</span>
-        <span class="group-count">${aliveCards}</span>
-      `;
-      li.addEventListener('click', async () => {
-        state.data.activeGroupId = g.id;
-        await Storage.setActiveGroup(g.id);
-        render();
-        // 窄屏下分组栏是浮层，选中后自动收起。
-        if (NARROW_QUERY.matches) setGroupsFolded(true);
-      });
-      els.groupList.appendChild(li);
+    const daily = groups.filter((g) => Storage.isDailyGroup(g))
+      .sort((a, b) => b.id.localeCompare(a.id));
+    const normal = groups.filter((g) => !Storage.isDailyGroup(g));
+
+    if (daily.length) {
+      appendGroupSection('每日标签页');
+      daily.forEach(appendGroupItem);
     }
+    if (normal.length) {
+      if (daily.length) appendGroupSection('集锦');
+      normal.forEach(appendGroupItem);
+    }
+  }
+
+  function appendGroupSection(label) {
+    const li = document.createElement('li');
+    li.className = 'group-section-label';
+    li.textContent = label;
+    els.groupList.appendChild(li);
+  }
+
+  function appendGroupItem(g) {
+    const li = document.createElement('li');
+    li.className = 'group-item' + (g.id === state.data.activeGroupId ? ' active' : '');
+    li.dataset.id = g.id;
+    const aliveCards = g.cards.filter((c) => !c.deleted).length;
+    li.innerHTML = `
+      <span class="group-dot" style="background:${Utils.escapeHtml(g.color)}"></span>
+      <span class="group-name">${Utils.escapeHtml(g.name)}</span>
+      <span class="group-count">${aliveCards}</span>
+    `;
+    li.addEventListener('click', async () => {
+      state.data.activeGroupId = g.id;
+      await Storage.setActiveGroup(g.id);
+      render();
+      // 窄屏下分组栏是浮层，选中后自动收起。
+      if (NARROW_QUERY.matches) setGroupsFolded(true);
+    });
+    els.groupList.appendChild(li);
   }
 
   function renderActiveGroup() {
@@ -324,7 +344,8 @@
     tag.textContent = c.type === 'excerpt' ? '摘录' : '页面';
     const time = document.createElement('span');
     time.className = 'card-time';
-    time.textContent = Utils.relativeTime(c.addedAt);
+    time.textContent = Utils.formatAddedTime(c.addedAt);
+    time.title = Utils.formatTime(c.addedAt);
     meta.appendChild(tag);
     meta.appendChild(time);
     body.appendChild(meta);
@@ -594,8 +615,10 @@
   async function collectWindowTabs(closeAfter) {
     setAddMenuOpen(false);
     try {
-      const group = getActiveGroup();
-      if (!group) throw new Error('请先创建一个分组');
+      const settings = await Storage.loadSettings();
+      const oneTabMode = !!(settings.behavior && settings.behavior.batchCollectDaily);
+      const activeGroup = getActiveGroup();
+      if (!oneTabMode && !activeGroup) throw new Error('请先创建一个分组');
 
       const win = await getCollectWindow();
       if (!win) throw new Error('无法获取当前窗口的标签页');
@@ -603,12 +626,25 @@
       const targets = (win.tabs || []).filter(isCollectibleTab);
       if (!targets.length) throw new Error('当前窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
 
-      await Storage.addCards(group.id, targets.map((tab) => ({
+      const cardInputs = targets.map((tab) => ({
         type: 'page',
         title: tab.title || tab.url,
         url: tab.url,
         favicon: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(tab.url)}&size=32`
-      })));
+      }));
+
+      let targetGroup;
+      let created = false;
+      let revived = false;
+      if (oneTabMode) {
+        const res = await Storage.addCardsToDailyGroup(Utils.dateKey(Utils.now()), cardInputs);
+        targetGroup = res.group;
+        created = res.created;
+        revived = res.revived;
+      } else {
+        await Storage.addCards(activeGroup.id, cardInputs);
+        targetGroup = activeGroup;
+      }
 
       let closed = 0;
       if (closeAfter) {
@@ -623,9 +659,15 @@
       }
 
       if (closeAfter) {
-        toast(`已收藏并关闭 ${closed} 个标签页`, 'success');
+        toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页`, 'success');
+      } else if (oneTabMode && created) {
+        toast(`已新建「${targetGroup.name}」并收进 ${targets.length} 个标签页`, 'success');
+      } else if (oneTabMode && revived) {
+        toast(`已重新启用「${targetGroup.name}」并收进 ${targets.length} 个标签页`, 'success');
+      } else if (oneTabMode) {
+        toast(`已追加 ${targets.length} 个标签页到「${targetGroup.name}」`, 'success');
       } else {
-        toast(`已将 ${targets.length} 个标签页收进「${group.name}」`, 'success');
+        toast(`已将 ${targets.length} 个标签页收进「${targetGroup.name}」`, 'success');
       }
       await loadAndRender();
     } catch (e) {
@@ -732,16 +774,20 @@
   async function loadSettingsToForm() {
     wdSettings = await Storage.loadSettings();
     const w = wdSettings.webdav || {};
+    const b = wdSettings.behavior || {};
     $('wd-url').value = w.url || '';
     $('wd-username').value = w.username || '';
     $('wd-password').value = w.password || '';
     $('wd-remote-dir').value = w.remoteDir || '/open-collections';
     $('wd-autosync').checked = !!w.autoSync;
     $('wd-interval').value = Number(w.intervalMinutes) || 30;
+    $('behavior-batch-daily').checked = !!b.batchCollectDaily;
   }
 
-  function readSettingsFromForm() {
+  async function readSettingsFromForm() {
+    const base = wdSettings || await Storage.loadSettings();
     return {
+      ...base,
       webdav: {
         url: $('wd-url').value.trim(),
         username: $('wd-username').value.trim(),
@@ -749,14 +795,27 @@
         remoteDir: $('wd-remote-dir').value.trim() || '/open-collections',
         autoSync: $('wd-autosync').checked,
         intervalMinutes: Math.max(5, Number($('wd-interval').value) || 30)
+      },
+      behavior: {
+        ...(base.behavior || {}),
+        batchCollectDaily: $('behavior-batch-daily').checked
       }
     };
   }
 
-  function setWDStatus(msg, type) {
-    const el = $('wd-status');
+  function setStatus(id, msg, type) {
+    const el = $(id);
+    if (!el) return;
     el.textContent = msg || '';
     el.className = 'wd-status' + (type ? ' ' + type : '');
+  }
+
+  function setWDStatus(msg, type) {
+    setStatus('wd-status', msg, type);
+  }
+
+  function setBehaviorStatus(msg, type) {
+    setStatus('behavior-status', msg, type);
   }
 
   // 在用户点击的同一个调用栈里申请该站点的网络权限（optional_host_permissions）。
@@ -774,23 +833,39 @@
     });
   }
 
-  async function persistSettings(s) {
-    wdSettings = s;
-    await Storage.saveSettings(s);
-    await sendMessage({ type: 'webdav-reschedule' });
+  async function persistSettings(s, opts) {
+    opts = opts || {};
+    wdSettings = await Storage.updateSettings(s);
+    if (opts.reschedule !== false) await sendMessage({ type: 'webdav-reschedule' });
   }
 
   async function saveSettings() {
     try {
-      await persistSettings(readSettingsFromForm());
+      await persistSettings(await readSettingsFromForm());
       setWDStatus('设置已保存' + (wdSettings.webdav.autoSync ? '，自动同步已启用' : ''), 'success');
     } catch (e) {
       setWDStatus('保存失败：' + (e.message || e), 'error');
     }
   }
 
+  async function saveBehaviorSettings() {
+    try {
+      const base = wdSettings || await Storage.loadSettings();
+      await persistSettings({
+        ...base,
+        behavior: {
+          ...(base.behavior || {}),
+          batchCollectDaily: $('behavior-batch-daily').checked
+        }
+      }, { reschedule: false });
+      setBehaviorStatus('设置已保存', 'success');
+    } catch (e) {
+      setBehaviorStatus('保存失败：' + (e.message || e), 'error');
+    }
+  }
+
   async function testConnection() {
-    const s = readSettingsFromForm();
+    const s = await readSettingsFromForm();
     if (!s.webdav.url) {
       setWDStatus('请先填写 WebDAV 服务器地址', 'error');
       return;
@@ -811,7 +886,7 @@
 
   async function runSync(mode) {
     const label = { sync: '同步', upload: '上传', download: '下载' }[mode] || mode;
-    const s = readSettingsFromForm();
+    const s = await readSettingsFromForm();
     if (!s.webdav.url) {
       setWDStatus('请先填写 WebDAV 服务器地址', 'error');
       return;
@@ -902,6 +977,9 @@
       handleImportFile(e.target.files[0]);
       e.target.value = '';
     });
+
+    // 收藏行为
+    $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
 
     // WebDAV
     $('btn-wd-save').addEventListener('click', saveSettings);

@@ -13,6 +13,22 @@
     activeGroupId: null
   };
 
+  const DEFAULT_SETTINGS = {
+    webdav: {
+      url: '',
+      username: '',
+      password: '',
+      remoteDir: '/open-collections',
+      autoSync: false,
+      intervalMinutes: 30
+    },
+    behavior: {
+      batchCollectDaily: false
+    }
+  };
+
+  const DAILY_GROUP_PREFIX = 'daily-';
+
   function isSW() {
     return typeof ServiceWorkerGlobalScope !== 'undefined' &&
       global instanceof ServiceWorkerGlobalScope;
@@ -70,9 +86,14 @@
 
   function normalizeGroup(g) {
     if (!g || typeof g !== 'object') return null;
+    const id = g.id || Utils.uuid();
+    const dailyMatch = /^daily-(\d{4}-\d{2}-\d{2})$/.exec(id);
+    let name = typeof g.name === 'string' ? g.name : '未命名分组';
+    // 兼容旧版自动生成的「标签页 · 日期」命名，去掉与分区标题重复的前缀。
+    if (dailyMatch && name === '标签页 · ' + dailyMatch[1]) name = dailyMatch[1];
     return {
-      id: g.id || Utils.uuid(),
-      name: typeof g.name === 'string' ? g.name : '未命名分组',
+      id,
+      name,
       color: typeof g.color === 'string' ? g.color : Utils.PALETTE[0],
       createdAt: Number(g.createdAt) || Utils.now(),
       updatedAt: Number(g.updatedAt) || Number(g.createdAt) || Utils.now(),
@@ -217,26 +238,30 @@
   };
 
   // ---- 卡片操作 ----
+  function cardFromInput(cardInput) {
+    return normalizeCard({
+      id: Utils.uuid(),
+      type: cardInput.type || 'page',
+      title: cardInput.title || '无标题',
+      url: cardInput.url || '',
+      favicon: cardInput.favicon || '',
+      notes: cardInput.notes || '',
+      excerpt: cardInput.excerpt || '',
+      sourceTitle: cardInput.sourceTitle || '',
+      sourceUrl: cardInput.sourceUrl || '',
+      addedAt: Utils.now(),
+      updatedAt: Utils.now(),
+      deleted: false,
+      deletedAt: null
+    });
+  }
+
   Storage.addCards = async function (groupId, cardInputs) {
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId && !x.deleted);
       if (!g) throw new Error('分组不存在');
       const cards = (cardInputs || []).map((cardInput) => {
-        const card = normalizeCard({
-          id: Utils.uuid(),
-          type: cardInput.type || 'page',
-          title: cardInput.title || '无标题',
-          url: cardInput.url || '',
-          favicon: cardInput.favicon || '',
-          notes: cardInput.notes || '',
-          excerpt: cardInput.excerpt || '',
-          sourceTitle: cardInput.sourceTitle || '',
-          sourceUrl: cardInput.sourceUrl || '',
-          addedAt: Utils.now(),
-          updatedAt: Utils.now(),
-          deleted: false,
-          deletedAt: null
-        });
+        const card = cardFromInput(cardInput);
         g.cards.push(card);
         return card;
       });
@@ -248,6 +273,55 @@
   Storage.addCard = async function (groupId, cardInput) {
     const cards = await Storage.addCards(groupId, [cardInput]);
     return cards[0];
+  };
+
+  // ---- 每日标签页（OneTab 模式）----
+  Storage.isDailyGroup = function (group) {
+    return !!(group && typeof group.id === 'string' &&
+      /^daily-\d{4}-\d{2}-\d{2}$/.test(group.id));
+  };
+
+  // 当天多次收藏追加到同一个每日分组；分组被删除时复活并继续追加。
+  Storage.addCardsToDailyGroup = async function (dateKey, cardInputs) {
+    const key = String(dateKey || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) throw new Error('日期格式不正确');
+    if (!Array.isArray(cardInputs) || cardInputs.length === 0) {
+      throw new Error('没有要收藏的标签页');
+    }
+    return Storage.mutate((data) => {
+      const id = DAILY_GROUP_PREFIX + key;
+      const now = Utils.now();
+      let group = data.groups.find((x) => x.id === id);
+      let created = false;
+      let revived = false;
+      if (!group) {
+        group = {
+          id,
+          name: key,
+          color: Utils.PALETTE[0],
+          createdAt: now,
+          updatedAt: now,
+          deleted: false,
+          deletedAt: null,
+          cards: []
+        };
+        data.groups.push(group);
+        created = true;
+      } else if (group.deleted) {
+        group.deleted = false;
+        group.deletedAt = null;
+        group.updatedAt = now;
+        revived = true;
+      }
+      const cards = cardInputs.map((cardInput) => {
+        const card = cardFromInput(cardInput);
+        group.cards.push(card);
+        return card;
+      });
+      group.updatedAt = now;
+      data.activeGroupId = group.id;
+      return { group, cards, created, revived };
+    });
   };
 
   Storage.updateCard = async function (groupId, cardId, patch) {
@@ -468,31 +542,63 @@
     });
   };
 
-  // ---- 设置（WebDAV 等）----
-  Storage.loadSettings = async function () {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(SETTINGS_KEY, (items) => {
-        resolve(items[SETTINGS_KEY] || {
-          webdav: {
-            url: '',
-            username: '',
-            password: '',
-            remoteDir: '/open-collections',
-            autoSync: false,
-            intervalMinutes: 30
-          }
-        });
-      });
-    });
-  };
+  // ---- 设置（WebDAV、收藏行为等）----
+  function normalizeSettings(raw) {
+    const base = Utils.clone(DEFAULT_SETTINGS);
+    if (!raw || typeof raw !== 'object') return base;
+    const webdav = raw.webdav && typeof raw.webdav === 'object' ? raw.webdav : {};
+    base.webdav = {
+      url: typeof webdav.url === 'string' ? webdav.url : '',
+      username: typeof webdav.username === 'string' ? webdav.username : '',
+      password: typeof webdav.password === 'string' ? webdav.password : '',
+      remoteDir: typeof webdav.remoteDir === 'string' && webdav.remoteDir ? webdav.remoteDir : '/open-collections',
+      autoSync: !!webdav.autoSync,
+      intervalMinutes: Math.max(5, Number(webdav.intervalMinutes) || 30)
+    };
+    const behavior = raw.behavior && typeof raw.behavior === 'object' ? raw.behavior : {};
+    base.behavior = {
+      batchCollectDaily: !!behavior.batchCollectDaily
+    };
+    // 保留未知顶层字段，便于后续增加配置段时不丢数据。
+    for (const key of Object.keys(raw)) {
+      if (key !== 'webdav' && key !== 'behavior') base[key] = raw[key];
+    }
+    return base;
+  }
 
-  Storage.saveSettings = async function (settings) {
+  function writeSettings(settings) {
     return new Promise((resolve, reject) => {
       chrome.storage.local.set({ [SETTINGS_KEY]: settings }, () => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
         else resolve();
       });
     });
+  }
+
+  Storage.loadSettings = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(SETTINGS_KEY, (items) => {
+        resolve(normalizeSettings(items[SETTINGS_KEY]));
+      });
+    });
+  };
+
+  // 合并写入，避免只保存某一个配置段时清空其他配置。
+  Storage.updateSettings = async function (patch) {
+    const current = await Storage.loadSettings();
+    const p = patch && typeof patch === 'object' ? patch : {};
+    const next = normalizeSettings({
+      ...current,
+      ...p,
+      webdav: { ...current.webdav, ...(p.webdav || {}) },
+      behavior: { ...current.behavior, ...(p.behavior || {}) }
+    });
+    await writeSettings(next);
+    return next;
+  };
+
+  Storage.saveSettings = async function (settings) {
+    return Storage.updateSettings(settings);
   };
 
   // ---- 同步合并（供 webdav.js 使用）----

@@ -4,6 +4,8 @@
 
   const Utils = {};
 
+  const pad2 = (n) => String(n).padStart(2, '0');
+
   // 生成足够随机的 ID（不依赖 crypto.randomUUID 以兼容旧环境，但优先使用）。
   Utils.uuid = function () {
     if (global.crypto && typeof global.crypto.randomUUID === 'function') {
@@ -20,8 +22,32 @@
   Utils.formatTime = function (ts) {
     if (!ts) return '';
     const d = new Date(ts);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  };
+
+  // 本地日期键（YYYY-MM-DD），用于每日分组。
+  Utils.dateKey = function (ts) {
+    const d = ts == null ? new Date() : new Date(ts);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  };
+
+  // 卡片上显示的添加时间：今天 / 昨天 / 月日 / 跨年只显示日期。
+  Utils.formatAddedTime = function (ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const sameDay = d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    if (sameDay) return `今天 ${hm}`;
+    const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const sameAsYesterday = d.getFullYear() === y.getFullYear() &&
+      d.getMonth() === y.getMonth() &&
+      d.getDate() === y.getDate();
+    if (sameAsYesterday) return `昨天 ${hm}`;
+    if (d.getFullYear() === now.getFullYear()) return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${hm}`;
+    return Utils.formatTime(ts).slice(0, 10);
   };
 
   // 相对时间，如「3 分钟前」。

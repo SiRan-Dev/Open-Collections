@@ -140,6 +140,21 @@
       </div>
       <div class="drawer-body">
         <section class="settings-section">
+          <h3>收藏行为</h3>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="behavior-batch-daily" type="checkbox" />
+              <span>批量收藏时收进「每日标签页」</span>
+            </label>
+          </div>
+          <p class="hint">收藏本窗口标签页时，不再加入当前分组，而是按本地日期归组；当天多次收藏会追加到同一组。单页收藏与摘录不受影响。</p>
+          <div class="settings-actions">
+            <button id="btn-behavior-save" class="btn btn-primary">保存设置</button>
+          </div>
+          <div id="behavior-status" class="wd-status"></div>
+        </section>
+
+        <section class="settings-section">
           <h3>数据导入 / 导出</h3>
           <div class="settings-actions">
             <button id="btn-export-json" class="btn btn-ghost">导出 JSON</button>
