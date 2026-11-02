@@ -60,11 +60,13 @@ Open Collections 是一个本地网页收藏夹，用来替代已下线的 Micro
 · 一键把当前页面收进当前分组（Ctrl+Shift+S）
 · 把选中文字存成摘录卡片，保留来源标题与链接（Ctrl+Shift+E）
 · 批量收藏：一次收进本窗口全部网页标签；可选择「只收藏」或「收藏并关闭」——关闭已收藏标签（含当前页）并留下一个干净的新标签页，固定标签自动跳过
+· 可选 OneTab 模式：批量收藏按本地日期归入每日标签页，当天多次收藏追加到同一组
 
 【查找与使用】
 · 跨全部组搜索标题、URL、笔记与摘录正文，结果标注所属分组
 · 单击卡片直接打开原链接；悬停可快速编辑（✎）或删除（🗑）
 · 「全部打开」一键在新标签页打开本组所有链接
+· 可选 AI 整理：自带 OpenAI 兼容接口，预览建议分组后再应用，支持撤销
 · 独立窗口（480×720）与侧边栏共用同一份数据，适合大屏整理
 
 【数据与同步】
@@ -75,8 +77,8 @@ Open Collections 是一个本地网页收藏夹，用来替代已下线的 Micro
 
 【隐私】
 · 无账号、无分析统计、无广告、无遥测
-· 只有你主动点击「摘录」或启用 WebDAV 时，才会申请网页访问权限或发起网络请求
-· WebDAV 凭据只保存在本机，仅发送给你自己填写的服务器
+· 只有你主动点击「摘录」、启用 WebDAV 或使用 AI 整理时，才会申请网页访问权限或发起网络请求
+· WebDAV 凭据与 AI API Key 只保存在本机，仅发送给你自己填写的服务器或接口
 
 【快捷键】
 Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开/关闭侧边栏
@@ -93,12 +95,14 @@ Open Collections is a local bookmark manager that replaces Microsoft Edge's reti
 • Groups: create, rename, delete, 10 colors, per-group item count, drag to reorder cards.
 • Save pages with one click (Ctrl+Shift+S); save selected text as an excerpt with its source (Ctrl+Shift+E).
 • Batch collect: pull every web tab in the current window into the active group, optionally closing them afterwards (pinned tabs are skipped) and leaving one fresh tab behind.
+• Optional OneTab mode: batch collections go into a date-named daily group, with multiple collections on the same day appended together.
 • Search across all groups by title, URL, notes and excerpt text.
 • Open all links in a group at once; edit or delete a card straight from its hover actions.
+• Optional AI organization with your own OpenAI-compatible endpoint: preview suggested groups before applying, with undo.
 • Standalone window (480×720) shares the same data as the side panel.
 • JSON backup with merge/overwrite import, Netscape HTML export, and optional WebDAV sync (Nextcloud compatible) with per-item conflict resolution.
 
-Privacy: no account, no analytics, no ads, no telemetry. Data stays in chrome.storage.local. Web access is requested only when you click "Excerpt" or enable WebDAV, and credentials are stored locally and sent only to your own server.
+Privacy: no account, no analytics, no ads, no telemetry. Data stays in chrome.storage.local. Web access is requested only when you click "Excerpt", enable WebDAV or use AI organization, and credentials/keys are stored locally and sent only to the server or endpoint you configure.
 ```
 
 ### 分类
@@ -139,7 +143,7 @@ https://siran-dev.github.io/Open-Collections/
 - scripting：仅在用户点击「摘录」或按 Ctrl+Shift+E 时读取当前页面的选中文字。
 - favicon：通过浏览器内置 _favicon 接口显示站点图标，不额外发起网络请求。
 - alarms：仅在用户勾选「定时自动同步」后用于 WebDAV 同步计时。
-- optional_host_permissions(<all_urls>)：不是默认授予。仅在用户点击「摘录」时申请读取当前页选区；WebDAV 同步时申请用户自填服务器的网络访问。用户拒绝后扩展其余功能仍可用。
+- optional_host_permissions(<all_urls>)：不是默认授予。仅在用户点击「摘录」时申请读取当前页选区；WebDAV 同步或 AI 整理时申请用户自填服务器的网络访问。用户拒绝后扩展其余功能仍可用。
 ```
 
 ### 认证测试说明
@@ -158,13 +162,13 @@ https://siran-dev.github.io/Open-Collections/
 ```markdown
 # Open Collections 隐私政策
 
-最后更新：2026-11-01
+最后更新：2026-11-02
 
 Open Collections（以下简称"本扩展"）是一个本地网页收藏工具。本政策说明本扩展会处理哪些信息、存放在哪里，以及与谁共享。
 
 ## 1. 我们不收集你的数据
 
-本扩展不含账号系统、分析统计、广告 SDK、遥测或远程代码。开发者不会收到你的任何数据，也不会将其出售或共享给第三方。
+本扩展不含账号系统、分析统计、广告 SDK、遥测或远程代码。开发者不会收到你的任何数据，也不会将其出售或共享给第三方；只有你主动配置的 WebDAV 服务器或 AI 接口会收到你主动发送的数据。
 
 ## 2. 本扩展在本地处理的信息
 
@@ -173,13 +177,14 @@ Open Collections（以下简称"本扩展"）是一个本地网页收藏工具�
 - 你收藏的网页：标题、网址、站点图标、收藏时间
 - 你保存的摘录：选中文字、来源标题与网址
 - 你填写的笔记、分组名称与颜色
-- 扩展设置：包括启用 WebDAV 时填写的服务器地址、用户名与密码
+- 扩展设置：包括启用 WebDAV 时填写的服务器地址、用户名与密码，以及启用 AI 整理时填写的接口地址、API Key 与模型名称
 
 ## 3. 网络访问
 
 - 站点图标：通过浏览器内置的 `_favicon` 接口读取，不向站点或第三方发起额外请求。
 - 摘录：只在你点击「摘录」或按 Ctrl+Shift+E 时，读取当前页面中你选中的文字。不会读取页面其他内容。
 - WebDAV 同步：只在你点击「测试连接」「立即同步」「仅上传」「仅下载」，或你主动开启「定时自动同步」后，向**你自己填写的** WebDAV 服务器发起请求。数据与凭据只发送到该服务器。
+- AI 整理：只在你点击「AI 整理」或设置中的「测试连接」时，向**你自己填写的** OpenAI 兼容接口发送当前分组的标题、URL、笔记与摘录片段，以及用于认证的 API Key。开发者不会收到这些数据；请自行确认该接口运营方的隐私与数据处理政策。
 - 除上述情况外，本扩展不发起任何网络请求。
 
 ## 4. 权限用途
@@ -190,7 +195,7 @@ Open Collections（以下简称"本扩展"）是一个本地网页收藏工具�
 - `activeTab` / `scripting`：在你点击「摘录」或按快捷键时读取当前页选中文字
 - `favicon`：显示站点图标
 - `alarms`：在你开启定时同步后进行计时
-- 可选的主机权限（`<all_urls>`）：默认不授予，仅在你点击「摘录」或使用 WebDAV 时按需申请
+- 可选的主机权限（`<all_urls>`）：默认不授予，仅在你点击「摘录」，或使用 WebDAV / AI 时按需申请对应站点的访问权限
 
 ## 5. 数据的保存与删除
 
@@ -200,7 +205,7 @@ Open Collections（以下简称"本扩展"）是一个本地网页收藏工具�
 
 ## 6. 凭据安全
 
-WebDAV 用户名与密码以明文形式保存在本机浏览器存储中（浏览器扩展无法提供更强的密钥保护）。若担心本机被他人使用，请不要启用同步，或为同步使用专用的低权限账号 / 应用专用密码。
+WebDAV 用户名、密码与 AI 接口的 API Key 均以明文形式保存在本机浏览器存储中（浏览器扩展无法提供更强的密钥保护）。若担心本机被他人使用，请不要启用同步或 AI 整理，或使用专用的低权限账号 / 应用专用密码。
 
 ## 7. 儿童隐私
 

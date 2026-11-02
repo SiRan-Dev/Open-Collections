@@ -6,7 +6,13 @@
     data: null,
     search: '',
     editingGroupId: null,
-    editingCardId: null
+    editingCardId: null,
+    aiConfig: null,
+    aiPlan: null,
+    aiGroupId: null,
+    aiBackupKey: null,
+    aiAbort: null,
+    aiRunId: 0
   };
 
   // ---- DOM 引用 ----
@@ -51,6 +57,7 @@
     els.toast = $('toast');
     els.settings = $('settings-drawer');
     els.editor = $('card-editor');
+    els.aiDrawer = $('ai-drawer');
   }
 
   // ---- 通知 ----
@@ -775,6 +782,7 @@
     wdSettings = await Storage.loadSettings();
     const w = wdSettings.webdav || {};
     const b = wdSettings.behavior || {};
+    const a = wdSettings.ai || {};
     $('wd-url').value = w.url || '';
     $('wd-username').value = w.username || '';
     $('wd-password').value = w.password || '';
@@ -782,12 +790,15 @@
     $('wd-autosync').checked = !!w.autoSync;
     $('wd-interval').value = Number(w.intervalMinutes) || 30;
     $('behavior-batch-daily').checked = !!b.batchCollectDaily;
+    $('ai-base-url').value = a.baseUrl || '';
+    $('ai-api-key').value = a.apiKey || '';
+    $('ai-model').value = a.model || '';
+    state.aiConfig = wdSettings.ai;
   }
 
-  async function readSettingsFromForm() {
-    const base = wdSettings || await Storage.loadSettings();
+  // AI 与收藏行为各自有独立保存按钮，这里只读 WebDAV，避免误覆盖其他配置段。
+  function readSettingsFromForm() {
     return {
-      ...base,
       webdav: {
         url: $('wd-url').value.trim(),
         username: $('wd-username').value.trim(),
@@ -795,10 +806,6 @@
         remoteDir: $('wd-remote-dir').value.trim() || '/open-collections',
         autoSync: $('wd-autosync').checked,
         intervalMinutes: Math.max(5, Number($('wd-interval').value) || 30)
-      },
-      behavior: {
-        ...(base.behavior || {}),
-        batchCollectDaily: $('behavior-batch-daily').checked
       }
     };
   }
@@ -818,6 +825,10 @@
     setStatus('behavior-status', msg, type);
   }
 
+  function setAiStatus(msg, type) {
+    setStatus('ai-status', msg, type);
+  }
+
   // 在用户点击的同一个调用栈里申请该站点的网络权限（optional_host_permissions）。
   function requestOriginPermission(url) {
     return new Promise((resolve) => {
@@ -825,7 +836,8 @@
       let origin;
       try {
         const u = new URL(url);
-        origin = `${u.protocol}//${u.host}/*`;
+        // match pattern 不支持端口，使用 hostname 以兼容 localhost / 非标准端口。
+        origin = `${u.protocol}//${u.hostname}/*`;
       } catch (e) {
         return resolve(false);
       }
@@ -836,12 +848,13 @@
   async function persistSettings(s, opts) {
     opts = opts || {};
     wdSettings = await Storage.updateSettings(s);
+    state.aiConfig = wdSettings.ai;
     if (opts.reschedule !== false) await sendMessage({ type: 'webdav-reschedule' });
   }
 
   async function saveSettings() {
     try {
-      await persistSettings(await readSettingsFromForm());
+      await persistSettings(readSettingsFromForm());
       setWDStatus('设置已保存' + (wdSettings.webdav.autoSync ? '，自动同步已启用' : ''), 'success');
     } catch (e) {
       setWDStatus('保存失败：' + (e.message || e), 'error');
@@ -850,11 +863,8 @@
 
   async function saveBehaviorSettings() {
     try {
-      const base = wdSettings || await Storage.loadSettings();
       await persistSettings({
-        ...base,
         behavior: {
-          ...(base.behavior || {}),
           batchCollectDaily: $('behavior-batch-daily').checked
         }
       }, { reschedule: false });
@@ -864,8 +874,61 @@
     }
   }
 
+  function readAiForm() {
+    return {
+      baseUrl: $('ai-base-url').value.trim(),
+      apiKey: $('ai-api-key').value.trim(),
+      model: $('ai-model').value.trim()
+    };
+  }
+
+  async function saveAiSettings() {
+    const cfg = readAiForm();
+    if (cfg.baseUrl) {
+      try {
+        AI.normalizeEndpoint(cfg.baseUrl);
+      } catch (e) {
+        setAiStatus(e.message, 'error');
+        return;
+      }
+    }
+    try {
+      await persistSettings({ ai: cfg }, { reschedule: false });
+      setAiStatus('设置已保存', 'success');
+    } catch (e) {
+      setAiStatus('保存失败：' + (e.message || e), 'error');
+    }
+  }
+
+  async function testAiConnection() {
+    const cfg = readAiForm();
+    if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
+      setAiStatus('请先填写接口地址、API Key 与模型名称', 'error');
+      return;
+    }
+    const granted = await requestOriginPermission(cfg.baseUrl);
+    if (!granted) {
+      setAiStatus('未获得访问该接口的网络权限，请重试并在弹窗中选择允许', 'error');
+      return;
+    }
+    setAiStatus('正在测试连接…', '');
+    let res;
+    try {
+      res = await AI.testConnection(cfg);
+    } catch (e) {
+      setAiStatus('连接失败：' + (e.message || e), 'error');
+      return;
+    }
+    try {
+      await persistSettings({ ai: cfg }, { reschedule: false });
+      setAiStatus('连接成功 ✓ 设置已保存' + (res.reply ? `（${Utils.truncate(res.reply, 20)}）` : ''), 'success');
+    } catch (e) {
+      setAiStatus('连接成功，但保存设置失败：' + (e.message || e), 'error');
+    }
+  }
+
   async function testConnection() {
-    const s = await readSettingsFromForm();
+    const s = readSettingsFromForm();
     if (!s.webdav.url) {
       setWDStatus('请先填写 WebDAV 服务器地址', 'error');
       return;
@@ -884,9 +947,233 @@
     }
   }
 
+  // ---- AI 整理 ----
+  function openSettingsForAi() {
+    openDrawer('settings');
+    setTimeout(() => {
+      const section = $('ai-settings-section');
+      if (section && section.scrollIntoView) section.scrollIntoView({ block: 'start' });
+    }, 50);
+  }
+
+  function openAiDrawer() {
+    els.aiDrawer.classList.remove('hidden');
+  }
+
+  function closeAiDrawer() {
+    state.aiRunId++;
+    if (state.aiAbort) {
+      state.aiAbort.abort();
+      state.aiAbort = null;
+    }
+    els.aiDrawer.classList.add('hidden');
+    state.aiPlan = null;
+    state.aiGroupId = null;
+    state.aiBackupKey = null;
+    $('btn-ai-organize').disabled = false;
+  }
+
+  function renderAiState(name) {
+    ['ai-loading', 'ai-empty', 'ai-error', 'ai-proposal', 'ai-applied'].forEach((id) => {
+      $(id).classList.toggle('hidden', id !== 'ai-' + name);
+    });
+  }
+
+  function renderAiPlan(plan) {
+    const group = state.data.groups.find((g) => g.id === state.aiGroupId && !g.deleted);
+    const list = $('ai-plan-list');
+    list.innerHTML = '';
+    $('ai-summary').textContent = plan.summary || `AI 建议拆分为 ${plan.groups.length} 个分组。`;
+
+    plan.groups.forEach((g, index) => {
+      const item = document.createElement('div');
+      item.className = 'ai-plan-item';
+
+      const head = document.createElement('label');
+      head.className = 'ai-plan-head';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = true;
+      checkbox.dataset.aiIndex = String(index);
+      const dot = document.createElement('span');
+      dot.className = 'ai-plan-dot';
+      dot.style.background = g.color;
+      const name = document.createElement('span');
+      name.className = 'ai-plan-name';
+      name.textContent = g.name;
+      const count = document.createElement('span');
+      count.className = 'ai-plan-count';
+      count.textContent = `${g.cardIds.length} 条`;
+      head.appendChild(checkbox);
+      head.appendChild(dot);
+      head.appendChild(name);
+      head.appendChild(count);
+      item.appendChild(head);
+
+      if (g.reason) {
+        const reason = document.createElement('div');
+        reason.className = 'ai-plan-reason';
+        reason.textContent = g.reason;
+        item.appendChild(reason);
+      }
+
+      const cardMap = new Map((group ? group.cards : []).map((c) => [c.id, c]));
+      const cards = g.cardIds.map((id) => cardMap.get(id)).filter(Boolean);
+      const cardList = document.createElement('ul');
+      cardList.className = 'ai-plan-cards';
+      cards.slice(0, 6).forEach((c) => {
+        const li = document.createElement('li');
+        li.textContent = c.title;
+        cardList.appendChild(li);
+      });
+      if (cards.length > 6) {
+        const li = document.createElement('li');
+        li.textContent = `…等 ${cards.length} 条`;
+        cardList.appendChild(li);
+      }
+      item.appendChild(cardList);
+      list.appendChild(item);
+    });
+
+    $('ai-unassigned').textContent = plan.unassignedCount > 0
+      ? `${plan.unassignedCount} 条内容将保留在原分组。`
+      : '所有内容都已归类。';
+    renderAiState('proposal');
+  }
+
+  async function startAiOrganize() {
+    const cfg = state.aiConfig;
+    if (!cfg || !cfg.baseUrl || !cfg.apiKey || !cfg.model) {
+      toast('请先在设置中配置 AI 接口', 'error');
+      openSettingsForAi();
+      return;
+    }
+    const group = getActiveGroup();
+    if (!group) {
+      toast('请先选择一个分组', 'error');
+      return;
+    }
+    const cards = group.cards.filter((c) => !c.deleted);
+    if (cards.length < 3) {
+      toast('当前分组至少需要 3 条内容才能整理', 'error');
+      return;
+    }
+    if (cards.length > AI.MAX_CARDS) {
+      toast(`当前分组有 ${cards.length} 条内容，一次最多整理 ${AI.MAX_CARDS} 条，请先拆分分组`, 'error');
+      return;
+    }
+    if (state.aiAbort) return;
+
+    const btn = $('btn-ai-organize');
+    btn.disabled = true;
+    let runId = state.aiRunId;
+    try {
+      const granted = await requestOriginPermission(cfg.baseUrl);
+      if (!granted) {
+        toast('未获得访问该 AI 接口的网络权限', 'error');
+        return;
+      }
+
+      runId = ++state.aiRunId;
+      const controller = new AbortController();
+      state.aiAbort = controller;
+      state.aiGroupId = group.id;
+      state.aiBackupKey = null;
+      $('ai-loading-text').textContent = `正在分析「${group.name}」中的 ${cards.length} 条内容…`;
+      openAiDrawer();
+      renderAiState('loading');
+
+      const existingNames = state.data.groups
+        .filter((g) => !g.deleted)
+        .map((g) => g.name);
+      const plan = await AI.organizeGroup({
+        cfg,
+        groupName: group.name,
+        existingNames,
+        cards,
+        signal: controller.signal
+      });
+      if (runId !== state.aiRunId) return;
+      if (!plan.groups.length) {
+        $('ai-empty-text').textContent = plan.summary || 'AI 没有找到需要拆分的主题，当前分组保持不变。';
+        renderAiState('empty');
+        return;
+      }
+
+      const aliveCount = state.data.groups.filter((g) => !g.deleted).length;
+      plan.groups.forEach((g, index) => {
+        g.color = Utils.PALETTE[(aliveCount + index) % Utils.PALETTE.length];
+      });
+      state.aiPlan = plan;
+      renderAiPlan(plan);
+    } catch (e) {
+      if (runId !== state.aiRunId) return;
+      if (e.code === 'cancelled') {
+        $('ai-empty-text').textContent = '已取消本次整理。';
+        renderAiState('empty');
+        return;
+      }
+      $('ai-error-msg').textContent = e.message || '整理失败';
+      renderAiState('error');
+    } finally {
+      if (runId === state.aiRunId) {
+        state.aiAbort = null;
+        btn.disabled = false;
+      }
+    }
+  }
+
+  async function applyAiPlan() {
+    if (!state.aiPlan || !state.aiGroupId) return;
+    const checks = Array.from($('ai-plan-list').querySelectorAll('input[data-ai-index]'));
+    const selected = checks
+      .filter((n) => n.checked)
+      .map((n) => Number(n.dataset.aiIndex));
+    if (!selected.length) {
+      toast('请至少选择一个分组', 'error');
+      return;
+    }
+
+    const groups = selected
+      .map((i) => state.aiPlan.groups[i])
+      .filter(Boolean)
+      .map((g) => ({ name: g.name, color: g.color, cardIds: g.cardIds }));
+    const sourceGroupId = state.aiGroupId;
+    $('btn-ai-apply').disabled = true;
+    $('btn-ai-cancel').disabled = true;
+    try {
+      const backupKey = await Storage.createBackup('ai-organize');
+      const res = await Storage.applyOrganizePlan({ sourceGroupId, groups });
+      state.aiBackupKey = backupKey;
+      await loadAndRender();
+      $('ai-applied-text').textContent = res.movedCards
+        ? `已新建 ${res.createdGroups.length} 个分组，移动 ${res.movedCards} 条内容。`
+        : '没有可移动的内容，数据可能已变化。';
+      renderAiState('applied');
+    } catch (e) {
+      toast('应用失败：' + (e.message || e), 'error');
+    } finally {
+      $('btn-ai-apply').disabled = false;
+      $('btn-ai-cancel').disabled = false;
+    }
+  }
+
+  async function undoAiPlan() {
+    if (!state.aiBackupKey) return;
+    if (!confirm('撤销本次 AI 整理？将恢复到整理前的数据。')) return;
+    try {
+      await Storage.restoreBackup(state.aiBackupKey);
+      await loadAndRender();
+      closeAiDrawer();
+      toast('已撤销本次整理', 'success');
+    } catch (e) {
+      toast('撤销失败：' + (e.message || e), 'error');
+    }
+  }
+
   async function runSync(mode) {
     const label = { sync: '同步', upload: '上传', download: '下载' }[mode] || mode;
-    const s = await readSettingsFromForm();
+    const s = readSettingsFromForm();
     if (!s.webdav.url) {
       setWDStatus('请先填写 WebDAV 服务器地址', 'error');
       return;
@@ -934,6 +1221,7 @@
     els.emptyAction.addEventListener('click', createGroup);
     els.btnGroupColor.addEventListener('click', () => els.colorPicker.classList.toggle('hidden'));
     $('btn-delete-group').addEventListener('click', deleteActiveGroup);
+    $('btn-ai-organize').addEventListener('click', startAiOrganize);
     $('btn-open-all').addEventListener('click', openAllInGroup);
     els.groupNameInput.addEventListener('change', renameGroupFromInput);
     els.groupNameInput.addEventListener('blur', renameGroupFromInput);
@@ -981,6 +1269,18 @@
     // 收藏行为
     $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
 
+    // AI 自动整理
+    $('btn-ai-save').addEventListener('click', saveAiSettings);
+    $('btn-ai-test').addEventListener('click', testAiConnection);
+    $('btn-ai-abort').addEventListener('click', closeAiDrawer);
+    $('btn-ai-empty-close').addEventListener('click', closeAiDrawer);
+    $('btn-ai-error-close').addEventListener('click', closeAiDrawer);
+    $('btn-ai-retry').addEventListener('click', startAiOrganize);
+    $('btn-ai-apply').addEventListener('click', applyAiPlan);
+    $('btn-ai-cancel').addEventListener('click', closeAiDrawer);
+    $('btn-ai-undo').addEventListener('click', undoAiPlan);
+    $('btn-ai-done').addEventListener('click', closeAiDrawer);
+
     // WebDAV
     $('btn-wd-save').addEventListener('click', saveSettings);
     $('btn-wd-test').addEventListener('click', testConnection);
@@ -990,7 +1290,11 @@
 
     // 抽屉关闭
     document.querySelectorAll('[data-close]').forEach((el) => {
-      el.addEventListener('click', () => closeDrawer(el.dataset.close));
+      const name = el.dataset.close;
+      el.addEventListener('click', () => {
+        if (name === 'ai') closeAiDrawer();
+        else closeDrawer(name);
+      });
     });
     document.addEventListener('click', (e) => {
       if (e.target.closest('.add-split') || e.target.closest('.add-menu')) return;
@@ -1001,6 +1305,7 @@
         setAddMenuOpen(false);
         closeDrawer('settings');
         closeDrawer('editor');
+        closeAiDrawer();
       }
     });
 
@@ -1015,6 +1320,11 @@
 
     // 跨侧边栏/独立窗口的实时刷新。
     chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes[Storage.SETTINGS_KEY]) {
+        Storage.loadSettings()
+          .then((s) => { state.aiConfig = s.ai; })
+          .catch(() => {});
+      }
       if (area === 'local' && (changes[Storage.STORAGE_KEY] || changes[Storage.SETTINGS_KEY])) {
         loadAndRender();
       }
@@ -1032,6 +1342,9 @@
     }
     setGroupsFolded(NARROW_QUERY.matches);
     bindEvents();
+    Storage.loadSettings()
+      .then((s) => { state.aiConfig = s.ai; })
+      .catch((e) => console.warn('[OpenCollections] load AI settings failed:', e));
     loadAndRender();
   }
 

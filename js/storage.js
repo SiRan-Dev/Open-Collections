@@ -24,6 +24,11 @@
     },
     behavior: {
       batchCollectDaily: false
+    },
+    ai: {
+      baseUrl: '',
+      apiKey: '',
+      model: ''
     }
   };
 
@@ -324,6 +329,74 @@
     });
   };
 
+  // 应用 AI 整理方案：新建目标分组，把卡片复制过去并在原分组打墓碑。
+  Storage.applyOrganizePlan = async function (plan) {
+    plan = plan || {};
+    return Storage.mutate((data) => {
+      const source = data.groups.find((g) => g.id === plan.sourceGroupId && !g.deleted);
+      if (!source) throw new Error('原分组不存在');
+      const specs = Array.isArray(plan.groups) ? plan.groups : [];
+      const now = Utils.now();
+      const usedNames = new Set(
+        data.groups.filter((g) => !g.deleted).map((g) => g.name.trim().toLowerCase())
+      );
+      const baseColorIndex = data.groups.filter((g) => !g.deleted).length;
+      const createdGroups = [];
+      let movedCards = 0;
+
+      for (let i = 0; i < specs.length; i++) {
+        const spec = specs[i];
+        if (!spec || !Array.isArray(spec.cardIds)) continue;
+        const wanted = new Set(spec.cardIds.filter((id) => typeof id === 'string'));
+        const cards = source.cards.filter((c) => !c.deleted && wanted.has(c.id));
+        if (cards.length < 2) continue;
+
+        let name = typeof spec.name === 'string' ? spec.name.trim() : '';
+        if (!name) name = '整理 ' + (i + 1);
+        let candidate = name;
+        let suffix = 2;
+        while (usedNames.has(candidate.toLowerCase())) {
+          candidate = name + ' ' + suffix;
+          suffix++;
+        }
+        usedNames.add(candidate.toLowerCase());
+
+        const color = typeof spec.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(spec.color)
+          ? spec.color
+          : Utils.PALETTE[(baseColorIndex + createdGroups.length) % Utils.PALETTE.length];
+
+        const target = {
+          id: Utils.uuid(),
+          name: candidate,
+          color,
+          createdAt: now,
+          updatedAt: now,
+          deleted: false,
+          deletedAt: null,
+          cards: []
+        };
+
+        for (const card of cards) {
+          const copy = Utils.clone(card);
+          copy.id = Utils.uuid();
+          copy.addedAt = card.addedAt;
+          copy.updatedAt = now;
+          target.cards.push(copy);
+          card.deleted = true;
+          card.deletedAt = now;
+          card.updatedAt = now;
+          movedCards++;
+        }
+
+        data.groups.push(target);
+        createdGroups.push({ id: target.id, name: target.name, count: target.cards.length });
+      }
+
+      if (movedCards > 0) source.updatedAt = now;
+      return { createdGroups, movedCards };
+    });
+  };
+
   Storage.updateCard = async function (groupId, cardId, patch) {
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId);
@@ -559,9 +632,15 @@
     base.behavior = {
       batchCollectDaily: !!behavior.batchCollectDaily
     };
+    const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
+    base.ai = {
+      baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl : '',
+      apiKey: typeof ai.apiKey === 'string' ? ai.apiKey : '',
+      model: typeof ai.model === 'string' ? ai.model : ''
+    };
     // 保留未知顶层字段，便于后续增加配置段时不丢数据。
     for (const key of Object.keys(raw)) {
-      if (key !== 'webdav' && key !== 'behavior') base[key] = raw[key];
+      if (key !== 'webdav' && key !== 'behavior' && key !== 'ai') base[key] = raw[key];
     }
     return base;
   }
@@ -591,7 +670,8 @@
       ...current,
       ...p,
       webdav: { ...current.webdav, ...(p.webdav || {}) },
-      behavior: { ...current.behavior, ...(p.behavior || {}) }
+      behavior: { ...current.behavior, ...(p.behavior || {}) },
+      ai: { ...current.ai, ...(p.ai || {}) }
     });
     await writeSettings(next);
     return next;
