@@ -23,7 +23,7 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "Open Collections",
+    "default_title": "点击工具栏图标打开 Open Collections",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -38,6 +38,9 @@
     "service_worker": "background.js"
   },
   "commands": {
+    "_execute_action": {
+      "description": "点击工具栏图标打开 Open Collections / Open Open Collections from the toolbar icon"
+    },
     "add-current-page": {
       "suggested_key": {
         "default": "Ctrl+Shift+S",

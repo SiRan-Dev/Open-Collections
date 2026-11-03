@@ -1364,6 +1364,16 @@
         desc.textContent = c.description || '（无说明）';
         info.appendChild(name);
         info.appendChild(desc);
+        // 事实判断：Chromium 对 _execute_action 的说明来源不稳定——可能显示固定文案
+        //（如「打开扩展程序」）、扩展名或 action.default_title，manifest 里的自定义
+        // description 不一定被采用，实际显示以浏览器为准。不要为了「好看」改用自定义
+        // 命令 id 冒充内置命令：只有 _execute_action 能把快捷键绑定到「点击工具栏图标」。
+        if (c.name === '_execute_action') {
+          const note = document.createElement('span');
+          note.className = 'shortcut-desc';
+          note.textContent = '系统内置命令，等同点击工具栏图标';
+          info.appendChild(note);
+        }
 
         const keyBadge = document.createElement('span');
         keyBadge.className = 'shortcut-key' + (c.shortcut ? '' : ' unset');
