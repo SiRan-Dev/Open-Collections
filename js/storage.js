@@ -1561,6 +1561,13 @@
   // 敏感项只导出「已配置/未配置」状态标记，绝不含值。
   const SENSITIVE_MARKERS = ['webdav.username', 'webdav.password', 'ai.apiKey'];
 
+  // 判断敏感项是否已配置：凭据加密后明文字段会被清空，必须同时检查密文信封。
+  function secretIsConfigured(settings, keyPath) {
+    const field = SECRET_FIELDS.find((f) => f.path.join('.') === keyPath);
+    if (field && settings.secrets && settings.secrets[field.name]) return true;
+    return !!readKeyPath(settings, keyPath);
+  }
+
   // 导出全部设置：schemaVersion + 导出时间 + 应用版本 + 设置项 + 敏感项状态标记。
   Storage.exportSettingsJSON = async function () {
     const settings = await Storage.loadSettings();
@@ -1570,7 +1577,7 @@
     }
     const sensitive = {};
     for (const keyPath of SENSITIVE_MARKERS) {
-      sensitive[keyPath] = readKeyPath(settings, keyPath) ? 'configured' : 'empty';
+      sensitive[keyPath] = secretIsConfigured(settings, keyPath) ? 'configured' : 'empty';
     }
     let appVersion = '';
     try {
