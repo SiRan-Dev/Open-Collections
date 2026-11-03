@@ -127,10 +127,10 @@ read later
 ### 隐私政策 URL（已发布）
 
 ```
-https://siran-dev.github.io/Open-Collections/
+https://siran-dev.github.io/Open-Collections/privacy.html
 ```
 
-源文件是 `docs/index.html`，通过 GitHub Pages 发布。修改政策后推送该文件即可自动更新，URL 不用换。
+源文件是 `docs/privacy.html`，通过 GitHub Pages 发布（首页 `docs/index.html` 为产品介绍页）。修改政策后推送该文件即可自动更新，URL 不用换。
 
 ## 三、权限用途说明（填在认证说明中）
 
@@ -222,7 +222,7 @@ WebDAV 用户名、密码与 AI 接口的 API Key 使用本机自动生成的随
 如有疑问，请联系：313007674+SiRan-Dev@users.noreply.github.com
 ```
 
-> 以上全文即 `docs/index.html` 的内容，已发布在 https://siran-dev.github.io/Open-Collections/ ，可直接作为商店的隐私政策 URL。
+> 以上全文即 `docs/privacy.html` 的内容，已发布在 https://siran-dev.github.io/Open-Collections/privacy.html ，可直接作为商店的隐私政策 URL。
 
 ## 五、上架步骤
 

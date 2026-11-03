@@ -1,7 +1,7 @@
 # Open Collections — Edge Add-ons 提交清单
 
 > 用途：把商店后台需要填写/勾选的内容集中在一处，避免逐项查找。发布前请核对实际页面地址与文案。
-> 隐私政策公开地址（商店后台填写）：https://siran-dev.github.io/Open-Collections/
+> 隐私政策公开地址（商店后台填写）：https://siran-dev.github.io/Open-Collections/privacy.html
 
 ## 1. 单一用途描述（Single purpose）
 
@@ -43,7 +43,7 @@ A local web-page, excerpt, and tab collection manager: save the current page, ba
 
 ## 5. 隐私政策
 
-- URL：https://siran-dev.github.io/Open-Collections/
+- URL：https://siran-dev.github.io/Open-Collections/privacy.html
 - 页面内容：中文 + English，覆盖本地存储范围、可选功能数据流、第三方仅限用户自填端点、不出售不出租不用于广告、导出/删除/撤回、https 与本机免密保险库加密、政策变更。
 - 发布前确认该 URL 可公开访问（GitHub Pages 已启用）。
 
