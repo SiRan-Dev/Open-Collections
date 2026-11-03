@@ -1387,7 +1387,8 @@
         }
         res = await sendMessage({ type: 'save-selection', force: true });
       }
-      toast((res.result && res.result.message) || '摘录已保存', 'success');
+      const result = (res && res.result) || {};
+      toast(result.message || '摘录已保存', result.truncated ? 'info' : 'success');
       await loadAndRender();
     } catch (e) {
       toast(e.message, 'error');
@@ -2698,7 +2699,10 @@
       renderAiPlan(plan);
       if (plan.cacheEntries && plan.cacheEntries.length) {
         Storage.saveAiCacheEntries(plan.cacheEntries)
-          .then(() => refreshAiCacheInfo())
+          .then((res) => {
+            refreshAiCacheInfo();
+            if (res && res.skipped) toast(res.message || '存储空间不足，已跳过本次 AI 分类缓存', 'info');
+          })
           .catch((e) => console.warn('[OpenCollections] save AI cache failed:', e));
       }
     } catch (e) {
@@ -2819,6 +2823,7 @@
           `卡片 新增${cs.added}/更新${cs.updated}/删除${cs.deleted}`
         ];
         if (result.settingsChanged) parts.push(`设置 ${result.settingsChanged} 个键`);
+        if (result.aiCacheSkipped) parts.push('AI 缓存空间不足已跳过');
         detail = `（${parts.join('，')}）`;
       } else if (result) {
         detail = `（${result.groups} 个分组）`;

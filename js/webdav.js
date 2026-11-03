@@ -355,6 +355,7 @@
     let saved;
     let settingsChanged = 0;
     let cacheMergedCount = null;
+    let cacheSkipped = false;
     let backupsImported = 0;
 
     if (mode === 'upload') {
@@ -371,8 +372,9 @@
         settingsChanged = r.changed.length;
       }
       if (scope.aiCache && remoteCachePack && remoteCachePack.cache) {
-        await Storage.saveAiCacheRaw(remoteCachePack.cache);
-        cacheMergedCount = Object.keys(remoteCachePack.cache).length;
+        const cacheRes = await Storage.saveAiCacheRaw(remoteCachePack.cache);
+        if (cacheRes && cacheRes.skipped) cacheSkipped = true;
+        else cacheMergedCount = Object.keys(remoteCachePack.cache).length;
       }
       saved = await Storage.mutate((data) => {
         const incoming = Utils.clone(remoteCollections.data);
@@ -395,8 +397,9 @@
           const cur = mergedCache[k];
           if (!cur || (Number(v.t) || 0) >= (Number(cur.t) || 0)) mergedCache[k] = { c: v.c, t: Number(v.t) || 0 };
         }
-        await Storage.saveAiCacheRaw(mergedCache);
-        cacheMergedCount = Object.keys(mergedCache).length;
+        const cacheRes = await Storage.saveAiCacheRaw(mergedCache);
+        if (cacheRes && cacheRes.skipped) cacheSkipped = true;
+        else cacheMergedCount = Object.keys(mergedCache).length;
       }
       saved = await Storage.mutate((data) => {
         const merged = Storage.mergeRemote(data, remoteCollections ? remoteCollections.data : null);
@@ -476,6 +479,7 @@
       stats,
       settingsChanged,
       aiCacheCount: cacheMergedCount,
+      aiCacheSkipped: cacheSkipped,
       backupsImported
     };
   };
