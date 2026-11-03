@@ -1377,8 +1377,20 @@
       return;
     }
     try {
-      const res = await sendMessage({ type: 'save-selection' });
-      toast((res.result && res.result.message) || '摘录已保存', 'success');
+      let res;
+      try {
+        res = await sendMessage({ type: 'save-selection' });
+      } catch (e) {
+        if (e.code !== 'duplicate' || !e.duplicate) throw e;
+        const name = e.duplicate.groupName || '其他分组';
+        if (!confirm(`该摘录已存在于「${name}」。\n仍然保存一条相同摘录？`)) {
+          toast(`已跳过：摘录已存在于「${name}」`, 'info');
+          return;
+        }
+        res = await sendMessage({ type: 'save-selection', force: true });
+      }
+      const result = (res && res.result) || {};
+      toast(result.message || '摘录已保存', result.truncated ? 'info' : 'success');
       await loadAndRender();
     } catch (e) {
       if (e.code === 'duplicate' && e.duplicate) {
@@ -2694,7 +2706,10 @@
       renderAiPlan(plan);
       if (plan.cacheEntries && plan.cacheEntries.length) {
         Storage.saveAiCacheEntries(plan.cacheEntries)
-          .then(() => refreshAiCacheInfo())
+          .then((res) => {
+            refreshAiCacheInfo();
+            if (res && res.skipped) toast(res.message || '存储空间不足，已跳过本次 AI 分类缓存', 'info');
+          })
           .catch((e) => console.warn('[OpenCollections] save AI cache failed:', e));
       }
     } catch (e) {
@@ -2816,6 +2831,7 @@
           `卡片 新增${cs.added}/更新${cs.updated}/删除${cs.deleted}`
         ];
         if (result.settingsChanged) parts.push(`设置 ${result.settingsChanged} 个键`);
+        if (result.aiCacheSkipped) parts.push('AI 缓存空间不足已跳过');
         if (result.uncollectableSkipped) parts.push(`跳过 ${result.uncollectableSkipped} 个不受支持的链接`);
         detail = `（${parts.join('，')}）`;
       } else if (result) {

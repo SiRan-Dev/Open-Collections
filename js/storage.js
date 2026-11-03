@@ -48,6 +48,11 @@
   const AI_CACHE_KEY = 'openpocket:ai-cache';
   const AI_CACHE_MAX = 2000;
 
+  // chrome.storage.local 默认配额 10 MiB（manifest 未申请 unlimitedStorage）。
+  // 写盘前预留 1 MiB 安全余量，给设置、AI 缓存、备份快照等其他键及实现差异留出空间。
+  const QUOTA_BYTES = 10 * 1024 * 1024;
+  const QUOTA_SAFETY_BYTES = 1024 * 1024;
+
   function isSW() {
     return typeof ServiceWorkerGlobalScope !== 'undefined' &&
       global instanceof ServiceWorkerGlobalScope;
@@ -160,10 +165,103 @@
     };
   }
 
-  async function saveRaw(data) {
+  // ---- 配额守卫 ----
+  // 写盘前用 chrome.storage.local.getBytesInUse 估算「当前已用 - 该键旧值 + 新值」，
+  // 超过安全阈值时不写入并抛出结构化 QUOTA_EXCEEDED，避免底层英文 quota 错误直接暴露给用户。
+  function utf8ByteLength(str) {
+    const s = String(str);
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s).length;
+    let bytes = 0;
+    for (let i = 0; i < s.length; i++) {
+      const code = s.charCodeAt(i);
+      if (code < 0x80) bytes += 1;
+      else if (code < 0x800) bytes += 2;
+      else if (code >= 0xd800 && code <= 0xdbff) { bytes += 4; i++; }
+      else bytes += 3;
+    }
+    return bytes;
+  }
+
+  function estimateBytes(value) {
+    try {
+      return utf8ByteLength(JSON.stringify(value));
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function getBytesInUse(key) {
     return new Promise((resolve, reject) => {
       try {
-        chrome.storage.local.set({ [STORAGE_KEY]: data }, () => {
+        if (!chrome.storage || !chrome.storage.local ||
+            typeof chrome.storage.local.getBytesInUse !== 'function') {
+          resolve(null);
+          return;
+        }
+        chrome.storage.local.getBytesInUse(key, (bytes) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(Number(bytes) || 0);
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  function isQuotaMessage(message) {
+    return /quota/i.test(String(message || ''));
+  }
+
+  function quotaExceeded(used, projected) {
+    const err = new Error('存储空间不足，本次保存已取消。请删除旧摘录或清理重复条目后重试');
+    err.code = 'QUOTA_EXCEEDED';
+    err.used = Math.max(0, Math.round(Number(used) || 0));
+    err.projected = Math.max(0, Math.round(Number(projected) || 0));
+    err.quota = QUOTA_BYTES;
+    return err;
+  }
+
+  // AI 分类缓存是「锦上添花」：配额不足时跳过本次缓存并提示，不能阻断整理主流程。
+  function aiCacheSkipped(err) {
+    return {
+      skipped: true,
+      code: 'QUOTA_EXCEEDED',
+      used: err ? err.used : undefined,
+      projected: err ? err.projected : undefined,
+      quota: err ? err.quota : QUOTA_BYTES,
+      message: '存储空间不足，已跳过本次 AI 分类缓存（不影响整理结果）。可删除旧摘录或清理重复条目后重试'
+    };
+  }
+
+  async function projectUsage(key, value) {
+    const [used, current] = await Promise.all([getBytesInUse(null), getBytesInUse(key)]);
+    if (used == null) return null;
+    return {
+      used,
+      projected: Math.max(0, used - (current || 0)) + estimateBytes(value),
+      quota: QUOTA_BYTES
+    };
+  }
+
+  async function assertQuota(key, value) {
+    let usage;
+    try {
+      usage = await projectUsage(key, value);
+    } catch (e) {
+      // 拿不到用量时宁可放行（仍由底层 set 报错兜底），不让环境差异阻断正常保存。
+      console.warn('[OpenCollections] quota precheck skipped:', e);
+      return;
+    }
+    if (!usage) return;
+    if (usage.projected > QUOTA_BYTES - QUOTA_SAFETY_BYTES) {
+      throw quotaExceeded(usage.used, usage.projected);
+    }
+  }
+
+  function setRaw(items) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.set(items, () => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
           } else {
@@ -174,6 +272,17 @@
         reject(e);
       }
     });
+  }
+
+  async function saveRaw(data) {
+    try {
+      await setRaw({ [STORAGE_KEY]: data });
+    } catch (e) {
+      if (!isQuotaMessage(e.message)) throw e;
+      let used = 0;
+      try { used = (await getBytesInUse(null)) || 0; } catch (err) {}
+      throw quotaExceeded(used, used + estimateBytes(data));
+    }
   }
 
   // 串行化所有「读取 → 修改 → 写回」操作：同上下文用本地队列兜底，
@@ -205,6 +314,8 @@
   Storage.STORAGE_KEY = STORAGE_KEY;
   Storage.BACKUP_PREFIX = BACKUP_PREFIX;
   Storage.SETTINGS_KEY = SETTINGS_KEY;
+  Storage.QUOTA_BYTES = QUOTA_BYTES;
+  Storage.QUOTA_SAFETY_BYTES = QUOTA_SAFETY_BYTES;
 
   Storage.load = async function () {
     const raw = await loadRaw();
@@ -213,16 +324,20 @@
 
   Storage.save = locked(async function (data) {
     const normalized = normalize(data);
+    await assertQuota(STORAGE_KEY, normalized);
     await saveRaw(normalized);
     return normalized;
   });
 
   // 在事务回调里拿到可变 data，返回后自动保存。
   // 内部直接写盘，避免与 save 的锁嵌套（Web Locks 不可重入）。
+  // 预检与写盘都在同一把写锁内：并发请求会依次拿到最新用量，不会出现「两个都通过预检后一起超限」。
   Storage.mutate = locked(async function (mutator) {
     const data = await Storage.load();
     const result = await mutator(data);
-    await saveRaw(normalize(data));
+    const normalized = normalize(data);
+    await assertQuota(STORAGE_KEY, normalized);
+    await saveRaw(normalized);
     return result === undefined ? data : result;
   });
 
@@ -1393,23 +1508,38 @@
   };
 
   // entries: [{ key, category }]
+  // 返回 { skipped:false, saved } 或 { skipped:true, code:'QUOTA_EXCEEDED', message }。
+  // 配额不足时不抛出，调用方据此提示「已跳过缓存」即可，不影响整理结果。
   Storage.saveAiCacheEntries = locked(async function (entries) {
-    if (!Array.isArray(entries) || !entries.length) return;
+    if (!Array.isArray(entries) || !entries.length) return { skipped: false, saved: 0 };
     const cache = await Storage.loadAiCache();
     const now = Utils.now();
+    let saved = 0;
     for (const e of entries) {
       if (!e || !e.key || !e.category) continue;
       cache[e.key] = { c: e.category, t: now };
+      saved++;
     }
     const keys = Object.keys(cache);
     if (keys.length > AI_CACHE_MAX) {
       keys.sort((a, b) => ((cache[a] && cache[a].t) || 0) - ((cache[b] && cache[b].t) || 0));
       for (const k of keys.slice(0, keys.length - AI_CACHE_MAX)) delete cache[k];
     }
+    try {
+      await assertQuota(AI_CACHE_KEY, cache);
+    } catch (e) {
+      if (e.code === 'QUOTA_EXCEEDED') return aiCacheSkipped(e);
+      throw e;
+    }
     return new Promise((resolve, reject) => {
       chrome.storage.local.set({ [AI_CACHE_KEY]: cache }, () => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else resolve();
+        if (chrome.runtime.lastError) {
+          const message = chrome.runtime.lastError.message;
+          if (isQuotaMessage(message)) resolve(aiCacheSkipped());
+          else reject(new Error(message));
+        } else {
+          resolve({ skipped: false, saved });
+        }
       });
     });
   });
@@ -1562,6 +1692,7 @@
   };
 
   // 覆盖写分类缓存（同步用），按时间裁剪到上限。
+  // 配额不足时同样降级为跳过（返回 skipped），不阻断同步主流程。
   Storage.saveAiCacheRaw = locked(async function (cache) {
     const entries = Object.entries(cache && typeof cache === 'object' ? cache : {});
     entries.sort((a, b) => ((b[1] && b[1].t) || 0) - ((a[1] && a[1].t) || 0));
@@ -1569,10 +1700,21 @@
     for (const [k, v] of entries.slice(0, AI_CACHE_MAX)) {
       if (v && typeof v.c === 'string') out[k] = { c: v.c, t: Number(v.t) || 0 };
     }
+    try {
+      await assertQuota(AI_CACHE_KEY, out);
+    } catch (e) {
+      if (e.code === 'QUOTA_EXCEEDED') return aiCacheSkipped(e);
+      throw e;
+    }
     return new Promise((resolve, reject) => {
       chrome.storage.local.set({ [AI_CACHE_KEY]: out }, () => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else resolve();
+        if (chrome.runtime.lastError) {
+          const message = chrome.runtime.lastError.message;
+          if (isQuotaMessage(message)) resolve(aiCacheSkipped());
+          else reject(new Error(message));
+        } else {
+          resolve({ skipped: false, saved: Object.keys(out).length });
+        }
       });
     });
   });

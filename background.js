@@ -196,7 +196,21 @@ async function addCurrentPage() {
 }
 
 // ---- 保存选中文字为摘录卡片 ----
-async function saveSelection() {
+// 单条摘录正文上限：200,000 字符（中文约 400 KB、英文约 200 KB），远低于 10 MiB 总配额，
+// 避免一条超大摘录吃满空间导致后续收藏全部失败。
+// 超出时保留前 N 个字符并明确提示（不静默截断、也不整条丢弃），用户可自行分多次摘录。
+const EXCERPT_MAX_CHARS = 200000;
+
+function selectionMessage(result) {
+  const chars = Number(result && result.chars) || 0;
+  if (result && result.truncated) {
+    return `选中的文字过长（共 ${chars} 字），已保存前 ${result.savedChars} 字。建议分多次摘录`;
+  }
+  return chars ? `摘录已保存（${chars} 字）` : '摘录已保存';
+}
+
+async function saveSelection(options) {
+  options = options || {};
   const tab = await getActiveWebTab();
   if (!tab || !tab.id) throw notCollectableError(null);
   if (!Utils.isCollectableUrl(tab.url)) throw notCollectableError(tab.url);
@@ -221,6 +235,10 @@ async function saveSelection() {
   selection = selection.trim();
   if (!selection) throw new Error('请先在页面中选中要保存的文字');
 
+  const originalChars = selection.length;
+  const truncated = originalChars > EXCERPT_MAX_CHARS;
+  const excerpt = truncated ? selection.slice(0, EXCERPT_MAX_CHARS) : selection;
+
   const groupId = await Storage.getActiveGroupId();
   if (!groupId) throw new Error('请先创建一个分组');
   const input = {
@@ -228,7 +246,7 @@ async function saveSelection() {
     title: tab.title || '摘录',
     url: tab.url,
     favicon: faviconUrlFor(tab.url),
-    excerpt: selection.slice(0, 5000),
+    excerpt,
     sourceTitle: tab.title || '',
     sourceUrl: tab.url
   };
@@ -247,7 +265,7 @@ async function saveSelection() {
   }
 
   await Storage.addCard(groupId, input);
-  return selection.length;
+  return { chars: originalChars, savedChars: excerpt.length, truncated };
 }
 
 // ---- 独立管理窗口：尺寸策略只在这一处，所有入口（命令/消息/图标降级）共用 ----
@@ -390,7 +408,10 @@ chrome.commands.onCommand.addListener((command) => {
         : { type: 'error', message: e.message }));
   } else if (command === 'save-selection') {
     saveSelection()
-      .then(() => notifyUI({ type: 'success', message: '摘录已保存' }))
+      .then((res) => notifyUI({
+        type: res && res.truncated ? 'info' : 'success',
+        message: selectionMessage(res)
+      }))
       .catch((e) => notifyUI(e.code === 'duplicate'
         ? { type: 'info', message: duplicateSkipMessage(e, true) }
         : { type: 'error', message: e.message }));
@@ -415,8 +436,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }));
       return true;
     case 'save-selection':
-      saveSelection()
-        .then((len) => sendResponse({ ok: true, result: { message: `摘录已保存（${len} 字）` } }))
+      saveSelection({ force: !!msg.force })
+        .then((res) => sendResponse({
+          ok: true,
+          result: {
+            message: selectionMessage(res),
+            chars: res.chars,
+            savedChars: res.savedChars,
+            truncated: res.truncated
+          }
+        }))
         .catch((e) => sendResponse({
           ok: false,
           error: e.message,
