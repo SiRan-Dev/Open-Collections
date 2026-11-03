@@ -42,7 +42,78 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.action.onClicked.addListener(() => openManagementWindow());
 }
 
-// ---- 工具：获取活动标签页信息 ----
+// ---- 工具：获取「最近活跃的普通网页标签」----
+// 独立管理窗口/侧边栏自身是扩展页面，不是网页。用户在独立窗口里点「添加当前页面」
+// 或按摘录快捷键时，活动标签是扩展页，取不到目标网页。
+// 因此监听 tabs.onActivated/onUpdated，记录「最近活跃的普通 http/https 标签」，
+// 活动标签不是普通网页时回退使用它（侧边栏场景活动标签通常是网页，不回退，行为不变）。
+const RECENT_TAB_KEY = 'recentWebTab';
+
+function isWebTabUrl(url) {
+  return /^https?:/i.test(String(url || ''));
+}
+
+async function trackWebTab(tab) {
+  if (!tab || typeof tab.id !== 'number' || tab.id < 0 || !isWebTabUrl(tab.url)) return;
+  const record = { id: tab.id, windowId: tab.windowId, url: tab.url, title: tab.title || tab.url };
+  try {
+    if (chrome.storage.session) {
+      await chrome.storage.session.set({ [RECENT_TAB_KEY]: record });
+    } else {
+      globalThis.__recentWebTab = record;
+    }
+  } catch (e) {}
+}
+
+async function readRecentWebTab() {
+  try {
+    if (chrome.storage.session) {
+      const items = await chrome.storage.session.get(RECENT_TAB_KEY);
+      return (items && items[RECENT_TAB_KEY]) || null;
+    }
+  } catch (e) {}
+  return globalThis.__recentWebTab || null;
+}
+
+async function clearRecentWebTab(tabId) {
+  const recent = await readRecentWebTab();
+  if (recent && recent.id === tabId) {
+    try {
+      if (chrome.storage.session) await chrome.storage.session.remove(RECENT_TAB_KEY);
+      else globalThis.__recentWebTab = null;
+    } catch (e) {}
+  }
+}
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId).then(trackWebTab).catch(() => {});
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url || changeInfo.title) trackWebTab(tab);
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  clearRecentWebTab(tabId).catch(() => {});
+});
+
+// 活动标签是普通网页时直接用；否则回退到最近活跃网页标签（不再可用时给出可读错误）。
+async function getActiveWebTab() {
+  let tab = null;
+  try {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    tab = active || null;
+  } catch (e) {}
+  if (tab && isWebTabUrl(tab.url)) return tab;
+  const recent = await readRecentWebTab();
+  if (recent && typeof recent.id === 'number') {
+    try {
+      const t = await chrome.tabs.get(recent.id);
+      if (t && isWebTabUrl(t.url)) return t;
+    } catch (e) {}
+  }
+  return null;
+}
+
+// ---- 工具：获取活动标签页信息（保留原行为供内部兼容调用）----
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab || null;
@@ -61,8 +132,8 @@ function faviconUrlFor(url) {
 // ---- 添加当前页面到当前分组 ----
 async function addCurrentPage(options) {
   options = options || {};
-  const tab = await getActiveTab();
-  if (!tab || !tab.url) throw new Error('无法获取当前标签页信息');
+  const tab = await getActiveWebTab();
+  if (!tab || !tab.url) throw new Error('请先在浏览器中打开一个网页再添加');
   // 忽略扩展自身与浏览器内部页。
   if (/^(chrome|edge|about|chrome-extension):/i.test(tab.url)) {
     throw new Error('无法保存浏览器内部页面');
@@ -97,8 +168,8 @@ async function addCurrentPage(options) {
 // ---- 保存选中文字为摘录卡片 ----
 async function saveSelection(options) {
   options = options || {};
-  const tab = await getActiveTab();
-  if (!tab || !tab.id) throw new Error('无法获取当前标签页');
+  const tab = await getActiveWebTab();
+  if (!tab || !tab.id) throw new Error('请先在浏览器中打开一个网页再保存摘录');
   if (!/^https?:/i.test(tab.url)) throw new Error('只能在普通网页中保存选区');
 
   let selection = '';
@@ -317,6 +388,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       openManagementWindow();
       sendResponse({ ok: true });
       return false;
+    case 'get-recent-web-window':
+      readRecentWebTab()
+        .then((recent) => sendResponse({ ok: true, windowId: recent ? recent.windowId : null }))
+        .catch(() => sendResponse({ ok: true, windowId: null }));
+      return true;
     case 'webdav-sync':
       if (activeSyncAbort) {
         sendResponse({ ok: false, error: '已有同步正在进行', code: 'busy' });

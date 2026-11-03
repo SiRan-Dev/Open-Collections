@@ -1008,15 +1008,24 @@
   async function getCollectWindow() {
     try {
       const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'], populate: true });
-      if (win && Array.isArray(win.tabs)) return win;
+      // 只接受普通浏览器窗口；独立管理窗口（popup）里点击时不能用扩展窗口的标签。
+      if (win && Array.isArray(win.tabs) && win.type === 'normal') return win;
     } catch (e) {
       console.warn('[OpenCollections] getLastFocused failed:', e);
     }
-    // 回退：以最后聚焦的活动标签所在窗口为准。
+    // 回退 1：用 background 记录的「最近活跃网页标签」所在窗口（与添加当前页/摘录同一套逻辑）。
+    try {
+      const res = await sendMessage({ type: 'get-recent-web-window' });
+      if (res && res.ok && typeof res.windowId === 'number') {
+        const tabs = await chrome.tabs.query({ windowId: res.windowId });
+        if (tabs.length) return { id: res.windowId, tabs, type: 'normal' };
+      }
+    } catch (e) {}
+    // 回退 2：以最后聚焦的活动标签所在窗口为准。
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (!tab) return null;
     const tabs = await chrome.tabs.query({ windowId: tab.windowId });
-    return { id: tab.windowId, tabs };
+    return { id: tab.windowId, tabs, type: 'normal' };
   }
 
   async function collectWindowTabs(closeAfter) {
@@ -1365,6 +1374,34 @@
     updateNetworkControls();
     refreshShortcuts();
     refreshAiCacheInfo().catch(() => {});
+    renderOverview(raw).catch(() => {});
+  }
+
+  // 概览四卡：存储占用 / AI 状态 / 同步状态 / 密钥状态。
+  async function renderOverview(raw) {
+    const storageEl = $('ov-storage-value');
+    if (!storageEl) return;
+    try {
+      const all = await new Promise((resolve) => chrome.storage.local.get(null, (items) => resolve(items || {})));
+      const bytes = new Blob([JSON.stringify(all)]).size;
+      storageEl.textContent = bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+    } catch (e) {
+      storageEl.textContent = '未知';
+    }
+    const aiEl = $('ov-ai-value');
+    if (aiEl) aiEl.textContent = raw.ai && raw.ai.enabled ? '已启用' : '未启用';
+    const syncEl = $('ov-sync-value');
+    if (syncEl) {
+      const w = raw.webdav || {};
+      syncEl.textContent = w.enabled
+        ? `已启用${w.autoSync ? ` · 每 ${Number(w.intervalMinutes) || 30} 分钟` : ''}`
+        : '未启用';
+    }
+    const vaultEl = $('ov-vault-value');
+    if (vaultEl) {
+      const v = Number(raw.secretsV) || 0;
+      vaultEl.textContent = v === 1 ? '待迁移旧密文' : '正常（免密加密）';
+    }
   }
 
   function hasSecretValue(settings, name) {
@@ -1434,6 +1471,11 @@
       const el = $(id);
       if (el) el.disabled = !wdOn;
     });
+    // 未配置功能显示引导卡（而非仅置灰控件）。
+    const aiGuide = $('ai-guide');
+    if (aiGuide) aiGuide.classList.toggle('hidden', aiOn);
+    const wdGuide = $('webdav-guide');
+    if (wdGuide) wdGuide.classList.toggle('hidden', wdOn);
   }
 
   function openConsent(kind) {
@@ -2564,6 +2606,18 @@
     drawer.classList.remove('hidden');
     if (name === 'settings') loadSettingsToForm();
   }
+
+  // 设置分区导航跳转：滚动到目标分区并高亮导航项。
+  function gotoSettingsSection(sectionId) {
+    const section = $(sectionId);
+    const container = document.querySelector('#settings-drawer .settings-sections');
+    if (section && container && section.scrollIntoView) {
+      section.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    document.querySelectorAll('#settings-nav .settings-nav-item').forEach((el) => {
+      el.classList.toggle('active', el.dataset.goto === sectionId);
+    });
+  }
   function closeDrawer(name) {
     const drawer = name === 'settings' ? els.settings : els.editor;
     drawer.classList.add('hidden');
@@ -2640,6 +2694,80 @@
     // 收藏行为
     $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
     $('behavior-batch-daily').addEventListener('change', updateAiInboxOptionVisibility);
+
+    // 设置分区导航：点击跳转 + 高亮（卡片与导航共用 data-goto）。
+    document.querySelectorAll('#settings-drawer [data-goto]').forEach((el) => {
+      el.addEventListener('click', () => gotoSettingsSection(el.dataset.goto));
+    });
+
+    // 控件即时生效（不再依赖分散的保存按钮）。
+    ['behavior-batch-daily', 'behavior-ai-inbox', 'behavior-allow-dup'].forEach((id) => {
+      $(id).addEventListener('change', saveBehaviorSettings);
+    });
+    const autoSaveWebdav = () => saveSettings(true);
+    ['wd-url', 'wd-remote-dir', 'wd-interval', 'wd-autosync', 'wd-sync-aicache', 'wd-sync-backups']
+      .forEach((id) => $(id).addEventListener('change', autoSaveWebdav));
+    $('wd-enabled').addEventListener('change', saveSettings);
+    ['ai-base-url', 'ai-model', 'ai-categories'].forEach((id) => {
+      $(id).addEventListener('change', () => saveAiSettings(true));
+    });
+    $('ai-enabled').addEventListener('change', () => saveAiSettings());
+    $('ai-api-key').addEventListener('change', () => {
+      if ($('ai-api-key').value.trim()) saveAiSettings(true);
+    });
+
+    // 引导卡启用按钮：勾选开关并走既有确认流程。
+    $('btn-ai-guide-enable').addEventListener('click', () => {
+      $('ai-enabled').checked = true;
+      saveAiSettings();
+    });
+    $('btn-wd-guide-enable').addEventListener('click', () => {
+      $('wd-enabled').checked = true;
+      saveSettings();
+    });
+
+    // 分区恢复默认（凭据不受影响）。
+    $('btn-reset-behavior').addEventListener('click', async () => {
+      if (!confirm('把「收藏与去重」的全部开关恢复为默认（关闭）？')) return;
+      await persistSettings({ behavior: { batchCollectDaily: false, aiIncludeInbox: false, allowDuplicateLinks: false } }, { reschedule: false });
+      await loadSettingsToForm();
+      toast('收藏与去重已恢复默认', 'success');
+    });
+    $('btn-reset-ai').addEventListener('click', async () => {
+      if (!confirm('把「AI 整理」的接口地址、模型与分类表恢复为默认（API Key 保留，开关关闭）？')) return;
+      await persistSettings({ ai: { enabled: false, baseUrl: '', model: '', categories: AI.DEFAULT_CATEGORIES.slice() } }, { reschedule: false });
+      await loadSettingsToForm();
+      toast('AI 整理已恢复默认', 'success');
+    });
+    $('btn-reset-webdav').addEventListener('click', async () => {
+      if (!confirm('把「云同步」的服务器与同步设置恢复为默认（凭据保留，开关关闭）？')) return;
+      await persistSettings({
+        webdav: {
+          enabled: false, url: '', remoteDir: '/open-collections',
+          autoSync: false, intervalMinutes: 30,
+          syncScope: { aiCache: false, backups: false }
+        }
+      });
+      await loadSettingsToForm();
+      toast('云同步已恢复默认', 'success');
+    });
+    $('btn-reset-onboarding').addEventListener('click', async () => {
+      try {
+        await new Promise((resolve) => chrome.storage.local.remove(Storage.ONBOARDING_KEY, () => resolve()));
+        if (els.onboardingBanner) els.onboardingBanner.classList.remove('hidden');
+        toast('隐私提示条已恢复显示', 'success');
+      } catch (e) {
+        toast('操作失败：' + (e.message || e), 'error');
+      }
+    });
+    $('btn-reset-general').addEventListener('click', async () => {
+      try {
+        await Storage.saveFoldState(null);
+        toast('分组栏折叠偏好已重置', 'success');
+      } catch (e) {
+        toast('操作失败：' + (e.message || e), 'error');
+      }
+    });
 
     // 本地加密（免密保险库）：旧数据迁移、跳过与清除密钥
     $('btn-security-migrate').addEventListener('click', migrateLegacySecrets);
@@ -2803,6 +2931,10 @@
     // 「在独立窗口打开」只在侧边栏场景有意义：独立窗口内隐藏（display:none，不占位）。
     const openWindowBtn = $('btn-window');
     if (openWindowBtn) openWindowBtn.classList.toggle('hidden', uiScene === 'standalone');
+    // 独立窗口是扩展页面，没有网页选区可读：隐藏「摘录」按钮（快捷键命令不受影响，
+    // 仍作用于最近活跃的普通网页标签）。
+    const excerptBtn = $('btn-save-sel');
+    if (excerptBtn) excerptBtn.classList.toggle('hidden', uiScene === 'standalone');
     Storage.loadFoldState()
       .then((state2) => {
         const stored = state2 && typeof state2[uiScene] === 'boolean' ? state2[uiScene] : null;

@@ -448,6 +448,64 @@ body.standalone-window {
 .drawer-head h2 { margin: 0; font-size: 16px; }
 .drawer-body { flex: 1; overflow-y: auto; padding: 16px; }
 
+/* 设置抽屉：左分区导航 + 右侧卡片 */
+#settings-drawer .drawer-panel { width: 520px; }
+.settings-body { display: flex; gap: 0; padding: 0; }
+.settings-nav {
+  flex: 0 0 128px;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 8px; border-right: 1px solid var(--border);
+  background: var(--bg-soft);
+  align-self: stretch;
+}
+.settings-nav-item {
+  appearance: none; border: 0; background: transparent; color: var(--text-muted);
+  font: inherit; font-size: 13px; text-align: left;
+  padding: 7px 10px; border-radius: 6px; cursor: pointer;
+}
+.settings-nav-item:hover { background: var(--border); color: var(--text); }
+.settings-nav-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.settings-nav-item.active { background: var(--border); color: var(--text); font-weight: 600; }
+.settings-sections { flex: 1; min-width: 0; overflow-y: auto; padding: 16px; }
+
+/* 概览卡片 */
+.overview-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px;
+}
+.ov-card {
+  appearance: none; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-soft); color: var(--text);
+  padding: 12px; font: inherit;
+}
+.ov-card:hover { border-color: var(--primary); }
+.ov-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ov-card-title { font-size: 11px; color: var(--text-muted); }
+.ov-card-value { font-size: 14px; font-weight: 600; }
+.ov-card-hint { font-size: 11px; color: var(--text-muted); }
+
+/* 未配置功能引导卡 */
+.feature-guide {
+  border: 1px dashed var(--border); border-radius: 10px;
+  background: var(--bg-soft); padding: 12px; margin-bottom: 10px;
+}
+.feature-guide p { margin: 0 0 8px; font-size: 13px; }
+
+/* 窄宽度（侧边栏）：导航改为顶部横向滚动，单列布局 */
+@media (max-width: 640px) {
+  #settings-drawer .drawer-panel { width: 100%; max-width: 100vw; }
+  .settings-body { flex-direction: column; }
+  .settings-nav {
+    flex: none; flex-direction: row; overflow-x: auto;
+    border-right: 0; border-bottom: 1px solid var(--border);
+    padding: 8px 10px; gap: 4px;
+  }
+  .settings-nav-item { white-space: nowrap; padding: 5px 9px; }
+  .settings-sections { overflow-y: visible; padding: 12px; }
+  .overview-grid { grid-template-columns: 1fr; }
+}
+
 /* AI 整理 */
 .ai-state { display: flex; flex-direction: column; gap: 12px; }
 #ai-loading,

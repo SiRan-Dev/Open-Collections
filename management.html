@@ -151,7 +151,203 @@
         <h2>设置</h2>
         <button class="btn-icon" data-close="settings" aria-label="关闭设置"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
-      <div class="drawer-body">
+      <div class="drawer-body settings-body">
+        <nav id="settings-nav" class="settings-nav" aria-label="设置分区导航">
+          <button type="button" class="settings-nav-item" data-goto="overview-section">概览</button>
+          <button type="button" class="settings-nav-item" data-goto="general-section">常规</button>
+          <button type="button" class="settings-nav-item" data-goto="behavior-section">收藏与去重</button>
+          <button type="button" class="settings-nav-item" data-goto="ai-settings-section">AI 整理</button>
+          <button type="button" class="settings-nav-item" data-goto="webdav-section">云同步</button>
+          <button type="button" class="settings-nav-item" data-goto="security-settings-section">安全</button>
+          <button type="button" class="settings-nav-item" data-goto="data-section">数据管理</button>
+          <button type="button" class="settings-nav-item" data-goto="shortcuts-section">快捷键</button>
+          <button type="button" class="settings-nav-item" data-goto="about-section">关于</button>
+        </nav>
+
+        <div class="settings-sections">
+        <section id="overview-section" class="settings-section">
+          <h3>概览</h3>
+          <div class="overview-grid">
+            <button type="button" id="ov-card-storage" class="ov-card" data-goto="data-section">
+              <span class="ov-card-title">存储占用</span>
+              <span id="ov-storage-value" class="ov-card-value">…</span>
+              <span class="ov-card-hint">本地浏览器存储</span>
+            </button>
+            <button type="button" id="ov-card-ai" class="ov-card" data-goto="ai-settings-section">
+              <span class="ov-card-title">AI 整理</span>
+              <span id="ov-ai-value" class="ov-card-value">…</span>
+              <span class="ov-card-hint">默认关闭</span>
+            </button>
+            <button type="button" id="ov-card-sync" class="ov-card" data-goto="webdav-section">
+              <span class="ov-card-title">云同步</span>
+              <span id="ov-sync-value" class="ov-card-value">…</span>
+              <span class="ov-card-hint">默认关闭</span>
+            </button>
+            <button type="button" id="ov-card-vault" class="ov-card" data-goto="security-settings-section">
+              <span class="ov-card-title">密钥状态</span>
+              <span id="ov-vault-value" class="ov-card-value">…</span>
+              <span class="ov-card-hint">免密本地加密</span>
+            </button>
+          </div>
+        </section>
+
+        <section id="general-section" class="settings-section">
+          <h3>常规</h3>
+          <p class="hint">收藏与设置仅保存在本机浏览器存储；AI 整理与云同步默认关闭，启用后才会联网。分组栏折叠状态按「侧边栏 / 独立窗口」分别记忆，可点顶栏按钮切换。</p>
+          <div class="settings-actions">
+            <button id="btn-reset-onboarding" class="btn btn-ghost btn-sm">重新显示隐私提示条</button>
+            <button id="btn-reset-general" class="btn btn-ghost btn-sm">恢复默认</button>
+          </div>
+        </section>
+
+        <section id="behavior-section" class="settings-section">
+          <h3>收藏与去重</h3>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="behavior-batch-daily" type="checkbox" />
+              <span>批量收藏时收进「每日收件箱」</span>
+            </label>
+          </div>
+          <div id="behavior-ai-inbox-block" class="sub-option hidden">
+            <div class="form-row form-inline">
+              <label class="checkbox-label">
+                <input id="behavior-ai-inbox" type="checkbox" />
+                <span>AI 整理时包含每日收件箱的条目</span>
+              </label>
+            </div>
+            <p class="hint">关闭时收件箱条目不会参与 AI 自动归类，避免被动搬动；在收件箱视图内主动点击「AI 整理」仍会执行。</p>
+          </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="behavior-allow-dup" type="checkbox" />
+              <span>允许重复添加同一链接</span>
+            </label>
+          </div>
+          <p class="hint">关闭时按规范化 URL 跨分组查重（忽略协议、末尾斜杠与 utm_* 等跟踪参数）；命中后会提示所在分组，并可选择仍然添加。同一页面的不同摘录不受影响。</p>
+          <p class="hint">开启「每日收件箱」后，批量收藏按本地日期收进「收件箱 · 每日标签页」，当天多次收藏合并到同一组。单页收藏与摘录仍进当前分组。</p>
+          <div class="settings-actions">
+            <button id="btn-behavior-save" class="btn btn-primary hidden">保存设置</button>
+            <button id="btn-dedupe-scan" class="btn btn-ghost">查找并清理重复链接</button>
+            <button id="btn-reset-behavior" class="btn btn-ghost btn-sm">恢复默认</button>
+          </div>
+          <div id="behavior-status" class="wd-status"></div>
+        </section>
+
+        <section id="ai-settings-section" class="settings-section">
+          <h3>AI 整理</h3>
+          <div id="ai-guide" class="feature-guide hidden">
+            <p><strong>未启用：</strong>AI 整理可以按固定分类把收藏自动归组，默认关闭、启用后才联网。</p>
+            <button id="btn-ai-guide-enable" class="btn btn-primary btn-sm">启用 AI 整理</button>
+          </div>
+          <p class="hint warning">
+            API Key 经本机密钥加密后保存在本地 chrome.storage。整理时会把当前范围的标题、域名、笔记与摘录片段发送到你填写的接口，不会发送给其他第三方；
+            请求前才临时解密。
+          </p>
+          <div class="form-row">
+            <label for="ai-base-url">接口地址（Base URL，通常以 /v1 结尾）</label>
+            <input id="ai-base-url" class="text-input" type="text" autocomplete="off"
+              placeholder="https://api.deepseek.com/v1" />
+          </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="ai-enabled" type="checkbox" />
+              启用 AI 自动整理（默认关闭）
+            </label>
+          </div>
+          <p class="hint">启用后才会调用接口；首次启用会展示发送内容、目标与截断长度，确认后才写入启用状态。关闭后会立即停止后续请求。修改以下任意配置会即时保存。</p>
+          <div class="form-row">
+            <label for="ai-api-key">API Key</label>
+            <input id="ai-api-key" class="text-input" type="password" autocomplete="off" />
+          </div>
+          <div class="form-row">
+            <label for="ai-model">模型名称</label>
+            <input id="ai-model" class="text-input" type="text" autocomplete="off"
+              placeholder="例如 deepseek-chat、gpt-4o-mini" />
+          </div>
+          <div class="form-row">
+            <label for="ai-categories">分类表（每行一个，最多 12 个）</label>
+            <textarea id="ai-categories" class="text-input" rows="6"></textarea>
+          </div>
+          <p class="hint">AI 只能从这些分类中选择；「其他」始终保留作为兜底，表外结果会归入其中，已有同名主题集锦会直接复用。分类表变化会使旧缓存失效；命中缓存的条目不会再次发送给 AI。</p>
+          <div class="settings-actions">
+            <button id="btn-ai-save" class="btn btn-primary hidden">保存设置</button>
+            <button id="btn-ai-test" class="btn btn-ghost">测试连接</button>
+            <button id="btn-ai-cache-clear" class="btn btn-ghost" disabled>清空分类缓存</button>
+            <button id="btn-reset-ai" class="btn btn-ghost btn-sm">恢复默认</button>
+          </div>
+          <div id="ai-status" class="wd-status"></div>
+          <p id="ai-cache-info" class="hint"></p>
+        </section>
+
+        <section id="webdav-section" class="settings-section">
+          <h3>云同步（WebDAV）</h3>
+          <div id="webdav-guide" class="feature-guide hidden">
+            <p><strong>未启用：</strong>可把收藏与设置同步到你自己的 WebDAV 服务器（如 Nextcloud），默认关闭、启用后才联网。</p>
+            <button id="btn-wd-guide-enable" class="btn btn-primary btn-sm">启用 WebDAV 云同步</button>
+          </div>
+          <p class="hint warning">
+            凭据经本机密钥加密后保存在本地 chrome.storage，不会上传给任何第三方（仅用于向你自己的 WebDAV 服务器认证）。
+            同步时只在内存中临时解密。
+          </p>
+          <div class="form-row">
+            <label for="wd-url">服务器地址</label>
+            <input id="wd-url" class="text-input" type="text"
+              placeholder="https://dav.example.com/remote.php/dav/files/user" />
+          </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="wd-enabled" type="checkbox" />
+              启用 WebDAV 云同步（默认关闭）
+            </label>
+          </div>
+          <p class="hint">启用后才会发起网络请求；首次启用会展示发送内容与目标，确认后才写入启用状态。关闭后会立即停止定时任务并取消进行中的同步。</p>
+          <div class="form-row">
+            <label for="wd-username">用户名</label>
+            <input id="wd-username" class="text-input" type="text" />
+          </div>
+          <div class="form-row">
+            <label for="wd-password">密码</label>
+            <input id="wd-password" class="text-input" type="password" />
+          </div>
+          <div class="form-row">
+            <label for="wd-remote-dir">远端目录</label>
+            <input id="wd-remote-dir" class="text-input" type="text" placeholder="/open-collections" />
+          </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="wd-autosync" type="checkbox" />
+              启用定时自动同步
+            </label>
+          </div>
+          <div class="form-row">
+            <label for="wd-interval">同步间隔（分钟，最小 5）</label>
+            <input id="wd-interval" class="text-input" type="number" min="5" value="30" />
+          </div>
+          <div class="form-row">
+            <label>同步内容</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label">
+                <input id="wd-sync-aicache" type="checkbox" />
+                分类缓存（AI 分类记录，默认不同步）
+              </label>
+              <label class="checkbox-label">
+                <input id="wd-sync-backups" type="checkbox" />
+                备份快照（最近 3 份本地快照，默认不同步）
+              </label>
+            </div>
+          </div>
+          <p class="hint">收藏与分组、设置项始终同步；WebDAV 凭据、AI API Key 与本地密钥永不同步。远端结构带版本号（openpocket/v2），版本不兼容时会停止同步并说明原因，不会强行覆盖。</p>
+          <div class="settings-actions">
+            <button id="btn-wd-save" class="btn btn-primary hidden">保存设置</button>
+            <button id="btn-wd-test" class="btn btn-ghost">测试连接</button>
+            <button id="btn-wd-sync" class="btn btn-ghost">立即同步</button>
+            <button id="btn-wd-upload" class="btn btn-ghost">仅上传</button>
+            <button id="btn-wd-download" class="btn btn-ghost">仅下载</button>
+            <button id="btn-reset-webdav" class="btn btn-ghost btn-sm">恢复默认</button>
+          </div>
+          <div id="wd-status" class="wd-status"></div>
+        </section>
+
         <section id="security-settings-section" class="settings-section">
           <h3>本地加密</h3>
           <p id="security-status" class="hint"></p>
@@ -180,39 +376,6 @@
             若无法信任当前设备，请不要保存凭据。清除本地密钥会删除全部已加密凭据且不可恢复。
           </p>
         </section>
-        <section class="settings-section">
-          <h3>收藏行为</h3>
-          <div class="form-row form-inline">
-            <label class="checkbox-label">
-              <input id="behavior-batch-daily" type="checkbox" />
-              <span>批量收藏时收进「每日收件箱」</span>
-            </label>
-          </div>
-          <div id="behavior-ai-inbox-block" class="sub-option hidden">
-            <div class="form-row form-inline">
-              <label class="checkbox-label">
-                <input id="behavior-ai-inbox" type="checkbox" />
-                <span>AI 整理时包含每日收件箱的条目</span>
-              </label>
-            </div>
-            <p class="hint">关闭时收件箱条目不会参与 AI 自动归类，避免被动搬动；在收件箱视图内主动点击「AI 整理」仍会执行。</p>
-          </div>
-          <div class="form-row form-inline">
-            <label class="checkbox-label">
-              <input id="behavior-allow-dup" type="checkbox" />
-              <span>允许重复添加同一链接</span>
-            </label>
-          </div>
-          <p class="hint">关闭时按规范化 URL 跨分组查重（忽略协议、末尾斜杠与 utm_* 等跟踪参数）；命中后会提示所在分组，并可选择仍然添加。同一页面的不同摘录不受影响。</p>
-          <p class="hint">开启后，批量收藏按本地日期收进「收件箱 · 每日标签页」，当天多次收藏合并到同一组。单页收藏与摘录仍进当前分组。</p>
-          <div class="settings-actions">
-            <button id="btn-behavior-save" class="btn btn-primary">保存设置</button>
-          </div>
-          <div id="behavior-status" class="wd-status"></div>
-          <div class="settings-actions">
-            <button id="btn-dedupe-scan" class="btn btn-ghost">查找并清理重复链接</button>
-          </div>
-        </section>
 
         <section id="shortcuts-section" class="settings-section">
           <h3>快捷键</h3>
@@ -228,8 +391,8 @@
           <p id="shortcuts-status" class="hint"></p>
         </section>
 
-        <section class="settings-section">
-          <h3>数据导入 / 导出</h3>
+        <section id="data-section" class="settings-section">
+          <h3>数据管理</h3>
           <div class="settings-actions">
             <button id="btn-export-json" class="btn btn-ghost">导出 JSON</button>
             <button id="btn-import-json" class="btn btn-ghost">导入 JSON（合并）</button>
@@ -244,119 +407,15 @@
           </div>
           <input id="file-import-settings" type="file" accept="application/json,.json" class="hidden" />
           <p class="hint">设置导出包含全部设置项与「已配置/未配置」状态标记，不含任何凭据、API Key 或本机专属值；导入前会显示差异预览并自动备份，可合并或覆盖。</p>
+          <p class="hint">删除分组或卡片后可从「查找并清理重复链接」等入口产生的本地备份恢复；卸载扩展会清除全部本地数据。</p>
         </section>
 
-        <section class="settings-section">
-          <h3>WebDAV 云同步</h3>
-          <p class="hint warning">
-            凭据经本机密钥加密后保存在本地 chrome.storage，不会上传给任何第三方（仅用于向你自己的 WebDAV 服务器认证）。
-            同步时只在内存中临时解密。
-          </p>
-          <div class="form-row">
-            <label>服务器地址</label>
-            <input id="wd-url" class="text-input" type="text"
-              placeholder="https://dav.example.com/remote.php/dav/files/user" />
-          </div>
-          <div class="form-row form-inline">
-            <label class="checkbox-label">
-              <input id="wd-enabled" type="checkbox" />
-              启用 WebDAV 云同步（默认关闭）
-            </label>
-          </div>
-          <p class="hint">启用后才会发起网络请求；首次启用会展示发送内容与目标，确认后才写入启用状态。关闭后会立即停止定时任务并取消进行中的同步。</p>
-          <div class="form-row">
-            <label>用户名</label>
-            <input id="wd-username" class="text-input" type="text" />
-          </div>
-          <div class="form-row">
-            <label>密码</label>
-            <input id="wd-password" class="text-input" type="password" />
-          </div>
-          <div class="form-row">
-            <label>远端目录</label>
-            <input id="wd-remote-dir" class="text-input" type="text" placeholder="/open-collections" />
-          </div>
-          <div class="form-row form-inline">
-            <label class="checkbox-label">
-              <input id="wd-autosync" type="checkbox" />
-              启用定时自动同步
-            </label>
-          </div>
-          <div class="form-row">
-            <label>同步间隔（分钟，最小 5）</label>
-            <input id="wd-interval" class="text-input" type="number" min="5" value="30" />
-          </div>
-          <div class="form-row">
-            <label>同步内容</label>
-            <div class="checkbox-group">
-              <label class="checkbox-label">
-                <input id="wd-sync-aicache" type="checkbox" />
-                分类缓存（AI 分类记录，默认不同步）
-              </label>
-              <label class="checkbox-label">
-                <input id="wd-sync-backups" type="checkbox" />
-                备份快照（最近 3 份本地快照，默认不同步）
-              </label>
-            </div>
-          </div>
-          <p class="hint">收藏与分组、设置项始终同步；WebDAV 凭据、AI API Key 与本地密钥永不同步。远端结构带版本号（openpocket/v2），版本不兼容时会停止同步并说明原因，不会强行覆盖。</p>
-          <div class="settings-actions">
-            <button id="btn-wd-save" class="btn btn-primary">保存设置</button>
-            <button id="btn-wd-test" class="btn btn-ghost">测试连接</button>
-            <button id="btn-wd-sync" class="btn btn-ghost">立即同步</button>
-            <button id="btn-wd-upload" class="btn btn-ghost">仅上传</button>
-            <button id="btn-wd-download" class="btn btn-ghost">仅下载</button>
-          </div>
-          <div id="wd-status" class="wd-status"></div>
-        </section>
-
-        <section id="ai-settings-section" class="settings-section">
-          <h3>AI 自动整理</h3>
-          <p class="hint warning">
-            API Key 经本机密钥加密后保存在本地 chrome.storage。整理时会把当前范围的标题、域名、笔记与摘录片段发送到你填写的接口，不会发送给其他第三方；
-            请求前才临时解密。
-          </p>
-          <div class="form-row">
-            <label>接口地址（Base URL，通常以 /v1 结尾）</label>
-            <input id="ai-base-url" class="text-input" type="text" autocomplete="off"
-              placeholder="https://api.deepseek.com/v1" />
-          </div>
-          <div class="form-row form-inline">
-            <label class="checkbox-label">
-              <input id="ai-enabled" type="checkbox" />
-              启用 AI 自动整理（默认关闭）
-            </label>
-          </div>
-          <p class="hint">启用后才会调用接口；首次启用会展示发送内容、目标与截断长度，确认后才写入启用状态。关闭后会立即停止后续请求。</p>
-          <div class="form-row">
-            <label>API Key</label>
-            <input id="ai-api-key" class="text-input" type="password" autocomplete="off" />
-          </div>
-          <div class="form-row">
-            <label>模型名称</label>
-            <input id="ai-model" class="text-input" type="text" autocomplete="off"
-              placeholder="例如 deepseek-chat、gpt-4o-mini" />
-          </div>
-          <div class="form-row">
-            <label>分类表（每行一个，最多 12 个）</label>
-            <textarea id="ai-categories" class="text-input" rows="6"></textarea>
-          </div>
-          <p class="hint">AI 只能从这些分类中选择；「其他」始终保留作为兜底，表外结果会归入其中，已有同名主题集锦会直接复用。</p>
-          <p class="hint">分类表变化会使旧缓存失效；命中缓存的条目不会再次发送给 AI。</p>
-          <div class="settings-actions">
-            <button id="btn-ai-save" class="btn btn-primary">保存设置</button>
-            <button id="btn-ai-test" class="btn btn-ghost">测试连接</button>
-            <button id="btn-ai-cache-clear" class="btn btn-ghost" disabled>清空分类缓存</button>
-          </div>
-          <div id="ai-status" class="wd-status"></div>
-          <p id="ai-cache-info" class="hint"></p>
-        </section>
-
-        <section class="settings-section">
+        <section id="about-section" class="settings-section">
           <h3>关于</h3>
           <p class="hint" id="about-version">Open Collections · 本地集锦管理。数据存放于浏览器 chrome.storage.local。</p>
           <p class="hint">快捷键绑定以浏览器为准，可在本页「快捷键」区查看当前绑定，或在浏览器快捷键页修改。</p>
         </section>
+        </div>
       </div>
     </div>
   </div>
