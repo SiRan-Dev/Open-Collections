@@ -1255,7 +1255,7 @@
     if (closeAfter) {
       // 先开一个新标签页接管窗口（侧边栏跟随窗口而非标签），
       // 再关闭全部已收藏标签，包括当前页。被跳过的重复标签保持打开。
-      await chrome.tabs.create({ active: true });
+      await chrome.tabs.create({ active: true, windowId: win.id });
       const ids = items.map((item) => item.tab.id);
       if (ids.length) {
         await chrome.tabs.remove(ids);
