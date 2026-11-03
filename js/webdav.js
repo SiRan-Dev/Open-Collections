@@ -350,19 +350,22 @@
     }
 
     // ---- 合并/替换 ----
-    let merged;
+    // 收藏数据的读改写放进 Storage.mutate：网络读写可能持续数秒，期间用户新增/编辑的数据
+    // 会在锁内重新加载后参与合并，而不是被同步开始时读取的旧快照覆盖。
+    let saved;
     let settingsChanged = 0;
     let cacheMergedCount = null;
     let backupsImported = 0;
 
     if (mode === 'upload') {
       // 强制上传：本地全部标记为最新，让本地在这次同步中胜出。
-      merged = Storage.touchAll(Utils.clone(localData));
+      saved = await Storage.mutate((data) => {
+        Storage.touchAll(data);
+      });
     } else if (mode === 'download') {
       if (!remoteCollections || !remoteCollections.data) {
         throw { code: 404, message: '远端还没有收藏数据文件，未做任何修改' };
       }
-      merged = remoteCollections.data;
       if (remoteSettingsPack && remoteSettingsPack.settings) {
         const r = await Storage.applySyncedSettings(remoteSettingsPack.settings, remoteSettingsPack.keys, { force: true });
         settingsChanged = r.changed.length;
@@ -371,9 +374,14 @@
         await Storage.saveAiCacheRaw(remoteCachePack.cache);
         cacheMergedCount = Object.keys(remoteCachePack.cache).length;
       }
+      saved = await Storage.mutate((data) => {
+        const incoming = Utils.clone(remoteCollections.data);
+        data.groups = incoming.groups;
+        data.activeGroupId = incoming.activeGroupId;
+        if (incoming.version != null) data.version = incoming.version;
+      });
     } else {
       // sync：收藏按条目级 lastModified + 删除墓碑合并；设置按键级时间取新。
-      merged = Storage.mergeRemote(localData, remoteCollections ? remoteCollections.data : null);
       if (remoteSettingsPack && remoteSettingsPack.settings) {
         const r = await Storage.applySyncedSettings(remoteSettingsPack.settings, remoteSettingsPack.keys);
         settingsChanged = r.changed.length;
@@ -390,6 +398,12 @@
         await Storage.saveAiCacheRaw(mergedCache);
         cacheMergedCount = Object.keys(mergedCache).length;
       }
+      saved = await Storage.mutate((data) => {
+        const merged = Storage.mergeRemote(data, remoteCollections ? remoteCollections.data : null);
+        data.groups = merged.groups;
+        data.activeGroupId = merged.activeGroupId;
+        if (merged.version != null) data.version = merged.version;
+      });
     }
 
     // 备份快照：远端快照并入本地备份命名空间（不可变，按键并集）。
@@ -405,10 +419,7 @@
       }
     }
 
-    const stats = Storage.diffCollections(localData, merged);
-
-    // 保存到本地。
-    await Storage.save(merged);
+    const stats = Storage.diffCollections(localData, saved);
 
     // 除「仅下载」外都回写远端，保证两端一致。
     if (mode !== 'download') {
@@ -418,7 +429,7 @@
       await writeRemoteJson(wd, remoteFileUrl(wd, FILE_COLLECTIONS), {
         schemaVersion: SCHEMA_VERSION,
         lastWrite: now,
-        data: merged
+        data: saved
       }, { signal: opts.signal });
       const bundle = await Storage.exportSettingsForSync();
       await writeRemoteJson(wd, remoteFileUrl(wd, FILE_SETTINGS), {
@@ -461,7 +472,7 @@
       ok: true,
       mode,
       backupKey,
-      groups: merged.groups.filter((g) => !g.deleted).length,
+      groups: saved.groups.filter((g) => !g.deleted).length,
       stats,
       settingsChanged,
       aiCacheCount: cacheMergedCount,
