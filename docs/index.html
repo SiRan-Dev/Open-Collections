@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Open Collections — 本地优先的网页收藏与整理</title>
 <meta name="description" content="替代 Edge 集锦的本地网页收藏扩展：收藏页面与摘录、批量收标签页、可选 AI 粗分类、可选 WebDAV 自托管同步、免密本地加密。无账号、无遥测、GPLv3 开源。" />
+<link rel="icon" type="image/png" sizes="48x48" href="assets/icons/icon48.png" />
 <style>
   :root {
     --bg: #ffffff;
@@ -55,12 +56,7 @@
   }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--fg); }
   .brand:hover { text-decoration: none; }
-  .mark {
-    width: 30px; height: 30px; border-radius: 8px; flex: none;
-    background: linear-gradient(135deg, #4f94ff, #2563eb);
-    display: inline-flex; align-items: center; justify-content: center;
-  }
-  .mark svg { width: 17px; height: 17px; }
+  .brand-icon { width: 28px; height: 28px; border-radius: 7px; display: block; flex: none; }
   nav.site { display: flex; gap: 18px; font-size: 14px; }
   nav.site a { color: var(--muted); }
   nav.site a:hover { color: var(--accent); text-decoration: none; }
@@ -156,12 +152,7 @@
 <header class="site">
   <div class="wrap">
     <a class="brand" href="./">
-      <span class="mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="8" y="3" width="12" height="14" rx="3" opacity=".55"/>
-          <rect x="4" y="7" width="13" height="14" rx="3"/>
-        </svg>
-      </span>
+      <img class="brand-icon" src="assets/icons/icon32.png" width="28" height="28" alt="" />
       Open Collections
     </a>
     <nav class="site">
