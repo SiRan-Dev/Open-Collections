@@ -172,17 +172,25 @@
   }
 
   // ---- 分组栏折叠 ----
-  // 分组栏任何宽度下默认展开，绝不因视口宽度自动隐藏（历史缺陷：窄窗口被 display:none 整块消失）。
-  // 只有用户点顶栏按钮才折叠，随时可再展开；≤520px 视口时展开态以浮层呈现，选中分组后自动收起浮层。
+  // 按运行场景分离默认值与记忆：独立窗口（standalone=1）默认展开，侧边栏默认收起；
+  // 场景由打开时的 URL 参数判定（可靠，不受用户手动拉宽侧边栏影响），折叠状态分键持久化，
+  // 用户手动切换后记住该场景的选择。收起只是折叠：分组面板保留在 DOM，顶栏「分组」入口
+  // 始终可见可点，随时一键展开；绝不出现不可恢复的整块消失。
+  let uiScene = 'sidepanel';
+  // ≤520px 视口时展开的分组栏是浮层，选中分组后自动收起浮层（不持久化，不算用户偏好）。
   const NARROW_QUERY = window.matchMedia('(max-width: 520px)');
 
-  function setGroupsFolded(folded) {
+  function setGroupsFolded(folded, persist) {
+    if (persist === undefined) persist = true;
     els.app.classList.toggle('groups-collapsed', folded);
     if (folded) els.colorPicker.classList.add('hidden');
     const label = folded ? '展开分组栏' : '折叠分组栏';
     els.btnToggleGroups.setAttribute('aria-expanded', String(!folded));
     els.btnToggleGroups.setAttribute('aria-label', label);
     els.btnToggleGroups.title = label;
+    if (persist) {
+      Storage.saveFoldState({ [uiScene]: folded }).catch(() => {});
+    }
   }
 
   function toggleGroups() {
@@ -236,8 +244,8 @@
       state.data.activeGroupId = g.id;
       await Storage.setActiveGroup(g.id);
       render();
-      // 仅窄屏浮层模式下，选中分组后收起浮层（浮层会遮挡内容）；非浮层布局保持展开。
-      if (NARROW_QUERY.matches) setGroupsFolded(true);
+      // 仅窄屏浮层模式下，选中分组后收起浮层（浮层会遮挡内容）；非持久化、非浮层布局保持展开。
+      if (NARROW_QUERY.matches) setGroupsFolded(true, false);
     });
     els.groupList.appendChild(li);
   }
@@ -2782,12 +2790,19 @@
       about.textContent = 'Open Collections v' + chrome.runtime.getManifest().version +
         ' · 本地集锦管理。数据存放于浏览器 chrome.storage.local。';
     }
-    // 分组栏默认展开：不再按视口宽度自动折叠（历史缺陷会整块隐藏分组栏）。
-    setGroupsFolded(false);
-    // 独立窗口入口带 standalone=1：启用窗口专属布局兜底（CSS min-width 等），侧边栏不受影响。
-    if (/[?&]standalone=1/.test(location.search)) {
+    // 场景判定：独立窗口由 background 创建时带 standalone=1，可靠且不受拉宽侧边栏影响；
+    // 侧边栏（无参数）默认收起分组栏，独立窗口默认展开；用户偏好按场景分别记忆。
+    uiScene = /[?&]standalone=1/.test(location.search) ? 'standalone' : 'sidepanel';
+    if (uiScene === 'standalone') {
       document.body.classList.add('standalone-window');
     }
+    Storage.loadFoldState()
+      .then((state2) => {
+        const stored = state2 && typeof state2[uiScene] === 'boolean' ? state2[uiScene] : null;
+        // 新用户默认：窄场景（侧边栏）收起，宽场景（独立窗口）展开。
+        setGroupsFolded(stored == null ? uiScene === 'sidepanel' : stored, false);
+      })
+      .catch(() => setGroupsFolded(uiScene === 'sidepanel', false));
     bindEvents();
     reportScreenInfo();
     window.addEventListener('resize', Utils.debounce(reportScreenInfo, 300));

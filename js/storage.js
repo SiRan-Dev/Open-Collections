@@ -1132,6 +1132,31 @@
   Storage.WINDOW_BOUNDS_KEY = WINDOW_BOUNDS_KEY;
   Storage.SCREEN_INFO_KEY = SCREEN_INFO_KEY;
 
+  // ---- 分组栏折叠状态（按场景分别持久化）----
+  const FOLD_STATE_KEY = 'openpocket:fold-state';
+  Storage.FOLD_STATE_KEY = FOLD_STATE_KEY;
+
+  Storage.loadFoldState = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(FOLD_STATE_KEY, (items) => {
+        const raw = items && items[FOLD_STATE_KEY];
+        resolve(raw && typeof raw === 'object' ? raw : {});
+      });
+    });
+  };
+
+  // patch 形如 { sidepanel: true, standalone: false }，两场景互不影响。
+  Storage.saveFoldState = async function (patch) {
+    const current = await Storage.loadFoldState();
+    const next = Object.assign({}, current, patch);
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [FOLD_STATE_KEY]: next }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(next);
+      });
+    });
+  };
+
   Storage.loadWindowBounds = async function () {
     return new Promise((resolve) => {
       chrome.storage.local.get(WINDOW_BOUNDS_KEY, (items) => {
