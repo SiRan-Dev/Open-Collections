@@ -87,7 +87,7 @@
     <li>你收藏的网页：标题、网址、站点图标、收藏时间</li>
     <li>你保存的摘录：选中文字、来源标题与网址</li>
     <li>你填写的笔记、分组名称与颜色</li>
-    <li>扩展设置，包括启用 WebDAV 时填写的服务器地址、用户名与密码，以及启用 AI 整理时填写的接口地址、API Key、模型名称与分类表；其中用户名、密码与 API Key 经主密码加密后保存</li>
+    <li>扩展设置，包括启用 WebDAV 时填写的服务器地址、用户名与密码，以及启用 AI 整理时填写的接口地址、API Key、模型名称与分类表；其中用户名、密码与 API Key 经本机自动生成的保险库密钥加密后保存</li>
     <li>AI 分类缓存（内容哈希与分类结果），仅保存在本机，用于避免重复调用接口</li>
 </ul>
 
@@ -120,14 +120,14 @@
 
   <h2>6. 你的权利与撤回</h2>
   <ul>
-    <li><strong>导出</strong>：设置页可导出 JSON 与 HTML 书签，导出内容不包含主密码或凭据。</li>
+    <li><strong>导出</strong>：设置页可导出 JSON 与 HTML 书签，导出内容不包含任何凭据或密钥。</li>
     <li><strong>删除</strong>：可随时删除分组/卡片，或覆盖导入清空本地数据；卸载扩展会清除本地存储。</li>
     <li><strong>撤回同意</strong>：AI 整理与 WebDAV 同步默认关闭，只有你首次启用并确认后才生效；关闭开关会立即停止后续请求，WebDAV 还会停止定时任务并取消进行中的同步。</li>
     <li>本扩展<strong>不会出售、出租</strong>你的数据，也不将其用于广告、画像或与功能无关的用途。</li>
   </ul>
 
   <h2>7. 凭据安全与传输</h2>
-  <p>WebDAV 服务器地址与 AI 接口地址仅接受 <code>https://</code>，保存时即校验并拒绝明文 http。WebDAV 用户名、密码与 AI 接口的 API Key 使用主密码经 PBKDF2-SHA256 派生密钥、AES-GCM 加密后保存在本机浏览器存储中；磁盘不保存明文与派生密钥。解锁状态只存在于内存/浏览器会话存储，关闭浏览器或手动锁定后失效。该措施能降低浏览器存储被离线读取时的泄露风险，但不能防御已入侵本机、能读取扩展内存或注入页面的恶意程序/扩展，也不能替代系统磁盘加密。若担心本机被他人使用，请不要启用同步或 AI 整理，或使用专用的低权限账号 / 应用专用密码。</p>
+  <p>WebDAV 服务器地址与 AI 接口地址仅接受 <code>https://</code>，保存时即校验并拒绝明文 http。WebDAV 用户名、密码与 AI 接口的 API Key 使用本机自动生成的随机 256 位保险库密钥（经同样随机生成的本机设备密钥封装后存于浏览器存储）以 AES-GCM 加密保存；磁盘不保存明文，整个使用过程无需输入任何密码，同步或 AI 请求时只在内存中临时解密。该措施能降低浏览器存储被离线读取（如拷贝浏览器配置、备份泄露）时的泄露风险，但不能防御已能读取本机浏览器配置或扩展内存的恶意程序/扩展（设备密钥与保险库记录在同一存储中），也不能替代系统磁盘加密。若担心本机被他人使用，请不要启用同步或 AI 整理，或使用专用的低权限账号 / 应用专用密码。</p>
 
   <h2>8. 儿童隐私</h2>
   <p>本扩展不是面向儿童的产品，也不会有意处理儿童的个人信息。</p>
@@ -151,7 +151,7 @@
   <p>The Extension has no accounts, analytics, advertising SDKs, telemetry, or remote code. The developer receives none of your data and never sells, rents, or shares it for advertising, profiling, or unrelated purposes. Only the WebDAV server or AI endpoint you explicitly configure receives data you choose to send.</p>
 
   <h3>2. Information processed and stored locally</h3>
-  <p>Only when you take an action, the Extension processes the following, stored entirely in your browser's local storage (<code>chrome.storage.local</code>): titles, URLs, site icons and timestamps of pages you save; selected text of excerpts and their source title/URL; notes you write; group names and colors; settings including https WebDAV/AI endpoint addresses, model name, category list, and WebDAV username/password and AI API key encrypted with a master password; and a local AI classification cache (content hashes and category results) used to avoid repeated API calls.</p>
+  <p>Only when you take an action, the Extension processes the following, stored entirely in your browser's local storage (<code>chrome.storage.local</code>): titles, URLs, site icons and timestamps of pages you save; selected text of excerpts and their source title/URL; notes you write; group names and colors; settings including https WebDAV/AI endpoint addresses, model name, category list, and WebDAV username/password and AI API key encrypted with a locally generated vault key; and a local AI classification cache (content hashes and category results) used to avoid repeated API calls.</p>
 
   <h3>3. Network access</h3>
   <ul>
@@ -163,19 +163,19 @@
   </ul>
 
   <h3>4. Permissions</h3>
-  <p><code>storage</code> to save data and session unlock state; <code>sidePanel</code> for the sidebar UI; <code>tabs</code> to read tab titles/URLs for saving and batch-collecting; <code>activeTab</code>/<code>scripting</code> to read your selection on demand; <code>favicon</code> for site icons; <code>alarms</code> for scheduled sync only when you enable it. The optional host permission (<code>&lt;all_urls&gt;</code>) is not granted by default and is requested only when you use excerpts, WebDAV, or AI.</p>
+  <p><code>storage</code> to save data and the local vault record; <code>sidePanel</code> for the sidebar UI; <code>tabs</code> to read tab titles/URLs for saving and batch-collecting; <code>activeTab</code>/<code>scripting</code> to read your selection on demand; <code>favicon</code> for site icons; <code>alarms</code> for scheduled sync only when you enable it. The optional host permission (<code>&lt;all_urls&gt;</code>) is not granted by default and is requested only when you use excerpts, WebDAV, or AI.</p>
 
   <h3>5. Retention, export, deletion, and withdrawal</h3>
   <ul>
     <li>Data stays in local browser storage and is removed when the Extension is uninstalled.</li>
     <li>You can delete groups or cards at any time, or replace all data via overwrite import.</li>
-    <li>You can export JSON or HTML bookmarks from the settings page; exports do not include the master password or credentials.</li>
+    <li>You can export JSON or HTML bookmarks from the settings page; exports never include credentials or keys.</li>
     <li>Cloud copies, if any, live on your own WebDAV server and are managed by you.</li>
     <li>AI and WebDAV are opt-in and can be disabled at any time. Disabling stops new requests; disabling WebDAV also stops scheduled jobs and cancels an in-progress sync.</li>
   </ul>
 
   <h3>6. Credentials and transport security</h3>
-  <p>WebDAV and AI endpoint addresses must use <code>https://</code>; plain http is rejected. WebDAV username/password and the AI API key are encrypted with a key derived from your master password using PBKDF2-SHA256 and AES-GCM, and stored locally. Plaintext credentials and derived keys are never written to disk; unlock state exists only in memory/session storage and expires when the browser closes or when you lock manually. This reduces the risk of offline reads of browser storage, but it cannot protect against malware, malicious extensions, or an attacker who can read the Extension's memory, and it does not replace full-disk encryption. Do not save credentials on a device you do not trust.</p>
+  <p>WebDAV and AI endpoint addresses must use <code>https://</code>; plain http is rejected. WebDAV username/password and the AI API key are encrypted with AES-GCM using a random 256-bit vault key generated on your device (itself wrapped by a random device key, both stored in browser storage). Plaintext credentials are never written to disk, no password is ever required, and secrets are decrypted in memory only when a sync or AI request is made. This reduces the risk of offline reads of browser storage (copied profiles or leaked backups), but it cannot protect against malware or malicious extensions that can already read your browser profile or the Extension's memory — the device key and vault record live in the same storage, and the vault is not a TPM — and it does not replace full-disk encryption. Do not save credentials on a device you do not trust.</p>
 
   <h3>7. Children</h3>
   <p>The Extension is not directed to children and does not intentionally process children's personal information.</p>

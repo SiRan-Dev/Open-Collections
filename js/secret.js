@@ -1,13 +1,22 @@
-// secret.js — 敏感字段加密：PBKDF2-SHA256 派生 + AES-GCM 逐字段加密。
-// 派生密钥只在内存与 chrome.storage.session（浏览器内存，关闭即失效）中保存，绝不写入 local 磁盘。
+// secret.js — 免密本地加密：随机保险库密钥（AES-GCM-256）+ 本机设备密钥封装。
+// 首次运行自动生成 256 位保险库密钥，用同样随机生成的本机设备密钥封装后存 storage.local，
+// 启动时自动解封，全程无感，无需用户输入任何密码。
+//
+// 威胁模型（如实告知，不夸大）：
+// - 能防：直接读取 chrome.storage.local 的离线拷贝/备份泄露时，敏感字段呈密文形态，
+//   普通查看无法直接读出明文。
+// - 不能防：已能读取本机浏览器配置/内存的恶意程序或恶意扩展（设备密钥也在同一存储里，
+//   只是分离保存便于轮换）；本机保险箱不是 TPM。
+//
+// 兼容：保留 PBKDF2 派生与旧密文解密能力，仅供「旧版主密码数据」一次性迁移使用。
 (function (global) {
   'use strict';
 
-  const ITERATIONS = 600000;
-  const SALT_BYTES = 16;
+  const VAULT_KEY = 'openpocket:vault';
   const IV_BYTES = 12;
-  const SESSION_KEY = 'openpocket:unlock';
+  const KEY_BYTES = 32; // 256 位
   const CANARY = 'open-collections-master-key-check';
+  const MIGRATION_ITERATIONS = 600000;
 
   function webcrypto() {
     const c = global.crypto;
@@ -27,31 +36,6 @@
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes;
-  }
-
-  async function deriveKey(password, saltB64, iterations) {
-    const c = webcrypto();
-    if (!saltB64) throw new Error('缺少加密盐值，无法派生密钥');
-    const salt = fromB64(saltB64);
-    const material = await c.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(String(password || '')),
-      'PBKDF2',
-      false,
-      ['deriveKey']
-    );
-    return c.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        salt,
-        iterations: Number(iterations) || ITERATIONS,
-        hash: 'SHA-256'
-      },
-      material,
-      { name: 'AES-GCM', length: 256 },
-      true,
-      ['encrypt', 'decrypt']
-    );
   }
 
   async function encryptText(key, text) {
@@ -78,18 +62,15 @@
     return new TextDecoder().decode(plain);
   }
 
-  function sessionArea() {
-    return (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) || null;
+  async function importRawKey(bytes, usages) {
+    return webcrypto().subtle.importKey('raw', bytes, { name: 'AES-GCM', length: 256 }, true, usages);
   }
 
-  function sessionGet() {
+  function readVaultRaw() {
     return new Promise((resolve) => {
-      const area = sessionArea();
-      if (!area) return resolve(null);
       try {
-        area.get(SESSION_KEY, (items) => {
-          if (chrome.runtime && chrome.runtime.lastError) return resolve(null);
-          const raw = items && items[SESSION_KEY];
+        chrome.storage.local.get(VAULT_KEY, (items) => {
+          const raw = items && items[VAULT_KEY];
           resolve(raw && typeof raw === 'object' ? raw : null);
         });
       } catch (e) {
@@ -98,24 +79,23 @@
     });
   }
 
-  function sessionSet(value) {
-    return new Promise((resolve) => {
-      const area = sessionArea();
-      if (!area) return resolve();
+  function writeVaultRaw(record) {
+    return new Promise((resolve, reject) => {
       try {
-        area.set({ [SESSION_KEY]: value }, () => resolve());
+        chrome.storage.local.set({ [VAULT_KEY]: record }, () => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(record);
+        });
       } catch (e) {
-        resolve();
+        reject(e);
       }
     });
   }
 
-  function sessionRemove() {
+  function removeVaultRaw() {
     return new Promise((resolve) => {
-      const area = sessionArea();
-      if (!area) return resolve();
       try {
-        area.remove(SESSION_KEY, () => resolve());
+        chrome.storage.local.remove(VAULT_KEY, () => resolve());
       } catch (e) {
         resolve();
       }
@@ -123,94 +103,69 @@
   }
 
   let memoryKey = null;
-  let memorySalt = '';
 
-  async function exportKey(key) {
-    const raw = await webcrypto().subtle.exportKey('raw', key);
-    return toB64(new Uint8Array(raw));
+  // 首次运行创建保险库：随机设备密钥 + 随机保险库密钥（用设备密钥封装）。
+  async function createVault() {
+    const c = webcrypto();
+    const deviceBytes = c.getRandomValues(new Uint8Array(KEY_BYTES));
+    const vaultBytes = c.getRandomValues(new Uint8Array(KEY_BYTES));
+    const deviceKey = await importRawKey(deviceBytes, ['encrypt', 'decrypt']);
+    const vaultKey = await importRawKey(vaultBytes, ['encrypt', 'decrypt']);
+    const wrapped = await encryptText(deviceKey, toB64(vaultBytes));
+    const record = {
+      schema: 2,
+      createdAt: Date.now(),
+      deviceKey: toB64(deviceBytes),
+      wrappedKey: wrapped
+    };
+    await writeVaultRaw(record);
+    memoryKey = vaultKey;
+    return record;
   }
 
-  async function importKey(b64) {
-    return webcrypto().subtle.importKey(
-      'raw',
-      fromB64(b64),
-      { name: 'AES-GCM', length: 256 },
-      true,
-      ['encrypt', 'decrypt']
-    );
+  // 解封保险库：用存储的设备密钥解开保险库密钥。
+  async function unwrapVault(record) {
+    if (!record || typeof record.deviceKey !== 'string' || !record.wrappedKey) {
+      throw new Error('保险库数据不完整');
+    }
+    const deviceKey = await importRawKey(fromB64(record.deviceKey), ['encrypt', 'decrypt']);
+    const vaultB64 = await decryptText(deviceKey, record.wrappedKey);
+    const vaultKey = await importRawKey(fromB64(vaultB64), ['encrypt', 'decrypt']);
+    return vaultKey;
   }
 
-  const Secret = {
-    ITERATIONS: ITERATIONS,
-    SESSION_KEY: SESSION_KEY,
+  const Vault = {
+    VAULT_KEY: VAULT_KEY,
     CANARY: CANARY,
+    MIGRATION_ITERATIONS: MIGRATION_ITERATIONS,
 
-    // 生成新的 salt 与派生密钥（不持久化）。
-    async create(password) {
-      const c = webcrypto();
-      const salt = toB64(c.getRandomValues(new Uint8Array(SALT_BYTES)));
-      const key = await deriveKey(password, salt, ITERATIONS);
-      return { key, salt, iterations: ITERATIONS };
-    },
-
-    // 校验密码并解锁；成功后把密钥放入内存与会话存储。
-    async unlock(password, security) {
-      if (!security || !security.salt || !security.check) {
-        throw new Error('加密数据不完整，请清除主密码后重新设置');
+    // 启动自动解封；无保险库时自动创建。全程无感。
+    async ensureKey() {
+      if (memoryKey) return memoryKey;
+      const record = await readVaultRaw();
+      if (!record) {
+        await createVault();
+        return memoryKey;
       }
-      const key = await deriveKey(password, security.salt, security.iterations);
-      let plain;
-      try {
-        plain = await decryptText(key, security.check);
-      } catch (e) {
-        throw new Error('主密码不正确');
-      }
-      if (plain !== CANARY) throw new Error('主密码不正确');
-      memoryKey = key;
-      memorySalt = security.salt;
-      await sessionSet({ key: await exportKey(key), salt: security.salt });
-      return true;
-    },
-
-    // 从会话存储恢复解锁状态（页面重开 / Service Worker 重启）。
-    async restore(security) {
-      if (!security || !security.enabled) return false;
-      if (memoryKey && memorySalt === security.salt) return true;
-      const saved = await sessionGet();
-      if (!saved || saved.salt !== security.salt || !saved.key) return false;
-      try {
-        memoryKey = await importKey(saved.key);
-        memorySalt = security.salt;
-        return true;
-      } catch (e) {
-        memoryKey = null;
-        memorySalt = '';
-        return false;
-      }
-    },
-
-    async ensureKey(security) {
-      if (!security || !security.enabled) return null;
-      if (memoryKey && memorySalt === security.salt) return memoryKey;
-      await Secret.restore(security);
+      memoryKey = await unwrapVault(record);
       return memoryKey;
     },
 
-    // 新设置主密码后直接采用当前密钥，避免再次派生。
-    async adopt(key, salt) {
-      memoryKey = key;
-      memorySalt = salt;
-      await sessionSet({ key: await exportKey(key), salt });
-    },
-
-    isUnlocked() {
+    isReady() {
       return !!memoryKey;
     },
 
-    async lock() {
+    // 保险库信息（用于设置页展示），不暴露任何密钥。
+    async getInfo() {
+      const record = await readVaultRaw();
+      if (!record) return { exists: false, createdAt: null };
+      return { exists: true, createdAt: record.createdAt || null, schema: record.schema || 0 };
+    },
+
+    // 清除本地密钥：丢弃保险库；调用方负责同时清除已加密凭据（不可逆）。
+    async clear() {
       memoryKey = null;
-      memorySalt = '';
-      await sessionRemove();
+      await removeVaultRaw();
     },
 
     encrypt(key, text) {
@@ -221,22 +176,49 @@
       return decryptText(key, envelope);
     },
 
-    // 只校验密码，不改变解锁状态。
-    async verify(password, security) {
+    // ---- 旧版主密码数据的一次性迁移工具 ----
+
+    // 用旧主密码派生密钥并解密其 canary，验证密码正确性；返回派生密钥。
+    async verifyLegacyPassword(password, security) {
       if (!security || !security.salt || !security.check) {
-        throw new Error('加密数据不完整，请清除主密码后重新设置');
+        throw new Error('旧版加密数据不完整，无法迁移');
       }
-      const key = await deriveKey(password, security.salt, security.iterations);
+      const c = webcrypto();
+      const material = await c.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(String(password || '')),
+        'PBKDF2',
+        false,
+        ['deriveKey']
+      );
+      const key = await c.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: fromB64(security.salt),
+          iterations: Number(security.iterations) || MIGRATION_ITERATIONS,
+          hash: 'SHA-256'
+        },
+        material,
+        { name: 'AES-GCM', length: 256 },
+        true,
+        ['encrypt', 'decrypt']
+      );
       let plain;
       try {
         plain = await decryptText(key, security.check);
       } catch (e) {
-        throw new Error('主密码不正确');
+        throw new Error('旧主密码不正确');
       }
-      if (plain !== CANARY) throw new Error('主密码不正确');
+      if (plain !== CANARY) throw new Error('旧主密码不正确');
       return key;
+    },
+
+    decryptLegacy(key, envelope) {
+      return decryptText(key, envelope);
     }
   };
 
-  global.Secret = Secret;
+  // 兼容旧引用（Secret 名称为历史遗留，新实现为免密 Vault）。
+  global.Secret = Vault;
+  global.Vault = Vault;
 })(typeof self !== 'undefined' ? self : this);

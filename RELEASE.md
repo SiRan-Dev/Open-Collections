@@ -79,7 +79,7 @@ Open Collections 是一个本地网页收藏夹，用来替代已下线的 Micro
 · 无账号、无分析统计、无广告、无遥测、无远程代码
 · AI 整理与 WebDAV 同步默认关闭；首次启用会展示发送内容与目标，确认后才生效
 · 只有你主动点击「摘录」、启用并确认 WebDAV 或 AI 整理时，才会申请网页访问权限或发起网络请求
-· 端点仅接受 https；WebDAV 凭据与 AI API Key 经主密码加密后只保存在本机，仅发送给你自己填写的服务器或接口
+· 端点仅接受 https；WebDAV 凭据与 AI API Key 经本机自动生成的保险库密钥加密后只保存在本机（无需设置任何密码），仅发送给你自己填写的服务器或接口
 
 【快捷键】
 Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开侧边栏（建议键位，实际以浏览器快捷键设置为准）
@@ -103,7 +103,7 @@ Open Collections is a local bookmark manager that replaces Microsoft Edge's reti
 • Standalone window (480×720) shares the same data as the side panel.
 • JSON backup with merge/overwrite import, Netscape HTML export, and optional WebDAV sync (Nextcloud compatible) with per-item conflict resolution.
 
-Privacy: no account, no analytics, no ads, no telemetry, no remote code. AI organization and WebDAV sync are off by default; the first enablement shows what is sent and where, and only works after confirmation. Web access is requested only when you click "Excerpt" or enable and confirm WebDAV/AI. Endpoints must use https; credentials and keys are encrypted with a master password, stored locally, and sent only to the server or endpoint you configure.
+Privacy: no account, no analytics, no ads, no telemetry, no remote code. AI organization and WebDAV sync are off by default; the first enablement shows what is sent and where, and only works after confirmation. Web access is requested only when you click "Excerpt" or enable and confirm WebDAV/AI. Endpoints must use https; credentials and keys are encrypted with a locally generated vault key (no password to set or remember), stored locally, and sent only to the server or endpoint you configure.
 ```
 
 ### 分类
@@ -178,7 +178,7 @@ Open Collections（以下简称"本扩展"）是一个本地网页收藏工具�
 - 你收藏的网页：标题、网址、站点图标、收藏时间
 - 你保存的摘录：选中文字、来源标题与网址
 - 你填写的笔记、分组名称与颜色
-- 扩展设置：包括启用 WebDAV 时填写的服务器地址、用户名与密码，以及启用 AI 整理时填写的接口地址、API Key、模型名称与分类表；其中用户名、密码与 API Key 经主密码加密后保存
+- 扩展设置：包括启用 WebDAV 时填写的服务器地址、用户名与密码，以及启用 AI 整理时填写的接口地址、API Key、模型名称与分类表；其中用户名、密码与 API Key 经本机自动生成的保险库密钥加密后保存
 - AI 分类缓存（内容哈希与分类结果），仅保存在本机，用于避免重复调用接口
 
 ## 3. 网络访问
@@ -207,7 +207,7 @@ Open Collections（以下简称"本扩展"）是一个本地网页收藏工具�
 
 ## 6. 凭据安全
 
-WebDAV 用户名、密码与 AI 接口的 API Key 使用主密码经 PBKDF2-SHA256 派生密钥、AES-GCM 加密后保存在本机浏览器存储中；磁盘不保存明文与派生密钥。解锁状态只存在于内存/浏览器会话存储，关闭浏览器或手动锁定后失效。该措施能降低浏览器存储被离线读取时的泄露风险，但不能防御已入侵本机、能读取扩展内存或注入页面的恶意程序/扩展，也不能替代系统磁盘加密。若担心本机被他人使用，请不要启用同步或 AI 整理，或使用专用的低权限账号 / 应用专用密码。
+WebDAV 用户名、密码与 AI 接口的 API Key 使用本机自动生成的随机 256 位保险库密钥（经同样随机生成的本机设备密钥封装后存于浏览器存储）以 AES-GCM 加密保存；磁盘不保存明文，整个使用过程无需输入任何密码，发起请求时只在内存中临时解密。该措施能降低浏览器存储被离线读取（如拷贝浏览器配置、备份泄露）时的泄露风险，但不能防御已能读取本机浏览器配置或扩展内存的恶意程序/扩展（设备密钥与保险库记录在同一存储中），也不能替代系统磁盘加密。若担心本机被他人使用，请不要启用同步或 AI 整理，或使用专用的低权限账号 / 应用专用密码。
 
 ## 7. 儿童隐私
 

@@ -35,15 +35,10 @@
       model: '',
       categories: Utils.DEFAULT_AI_CATEGORIES.slice()
     },
-    security: {
-      enabled: false,
-      version: 1,
-      kdf: 'PBKDF2-SHA256',
-      iterations: 600000,
-      salt: '',
-      check: null,
-      autoLockMinutes: 0
-    },
+    // security 已废弃（仅用于识别旧版主密码数据待迁移），新版本不再写入。
+    security: null,
+    // 0=无加密凭据；1=旧版主密码加密（待迁移）；2=免密保险库加密。
+    secretsV: 0,
     secrets: {}
   };
 
@@ -867,31 +862,34 @@
       categories: categories.length ? categories : DEFAULT_SETTINGS.ai.categories.slice()
     };
 
-    const security = raw.security && typeof raw.security === 'object' ? raw.security : {};
-    base.security = {
-      enabled: !!security.enabled,
-      version: 1,
-      kdf: 'PBKDF2-SHA256',
-      iterations: Math.max(100000, Number(security.iterations) || DEFAULT_SETTINGS.security.iterations),
-      salt: typeof security.salt === 'string' ? security.salt : '',
-      check: secretEnvelope(security.check),
-      autoLockMinutes: Math.max(0, Math.min(240, Number(security.autoLockMinutes) || 0))
-    };
+    // security 只用于识别「旧版主密码加密数据」是否待迁移；新版本不再创建该段。
+    base.security = null;
+    const security = raw.security && typeof raw.security === 'object' ? raw.security : null;
+    if (security && security.enabled) {
+      base.security = {
+        enabled: true,
+        iterations: Number(security.iterations) || 600000,
+        salt: typeof security.salt === 'string' ? security.salt : '',
+        check: secretEnvelope(security.check)
+      };
+    }
+    // secretsV：0=无加密凭据；1=旧版主密码加密（待迁移）；2=免密保险库加密。
+    base.secretsV = Number(raw.secretsV) || (base.security ? 1 : 0);
     const secrets = raw.secrets && typeof raw.secrets === 'object' ? raw.secrets : {};
     base.secrets = {};
     for (const field of SECRET_FIELDS) {
       const envelope = secretEnvelope(secrets[field.name]);
       if (envelope) base.secrets[field.name] = envelope;
     }
-    // 已启用主密码时，磁盘上绝不保留明文凭据。
-    if (base.security.enabled) {
+    // 明文凭据绝不留在磁盘：新版本 encryptInputs 前统一清除；旧版主密码数据本身也不含明文。
+    if (base.secretsV) {
       for (const field of SECRET_FIELDS) writePath(base, field.path, '');
     }
 
     // 保留未知顶层字段，便于后续增加配置段时不丢数据。
     for (const key of Object.keys(raw)) {
       if (key !== 'webdav' && key !== 'behavior' && key !== 'ai' &&
-        key !== 'security' && key !== 'secrets') base[key] = raw[key];
+        key !== 'security' && key !== 'secrets' && key !== 'secretsV') base[key] = raw[key];
     }
     return base;
   }
@@ -914,7 +912,7 @@
   };
 
   // 合并写入，避免只保存某一个配置段时清空其他配置。
-  // 敏感字段：未设主密码时拒绝写入明文；已启用时在写入前加密并清空明文字段。
+  // 敏感字段：写入前用免密保险库密钥加密，明文字段绝不落盘；全程无感，无需密码。
   Storage.updateSettings = async function (patch) {
     const current = await Storage.loadSettings();
     const p = patch && typeof patch === 'object' ? patch : {};
@@ -925,7 +923,8 @@
       behavior: { ...current.behavior, ...(p.behavior || {}) },
       ai: { ...current.ai, ...(p.ai || {}) },
       security: current.security,
-      secrets: current.secrets
+      secrets: current.secrets,
+      secretsV: current.secretsV
     });
 
     const inputs = {};
@@ -941,23 +940,19 @@
       Utils.requireHttpsUrl(p.ai.baseUrl, 'AI 接口地址');
     }
     if (Object.keys(inputs).length) {
-      if (!current.security.enabled) {
-        const err = new Error('请先在「设置 → 主密码与本地加密」设置主密码，凭据不会以明文保存');
-        err.code = 'setup-required';
+      if (current.secretsV === 1) {
+        const err = new Error('检测到旧版主密码加密的数据：请先在「设置 → 本地加密」完成一次性迁移，再修改凭据');
+        err.code = 'legacy';
         throw err;
       }
-      const key = await Secret.ensureKey(current.security);
-      if (!key) {
-        const err = new Error('主密码已锁定：请先在设置中解锁后再保存凭据');
-        err.code = 'locked';
-        throw err;
-      }
+      const key = await Vault.ensureKey();
       for (const name of Object.keys(inputs)) {
-        next.secrets[name] = await Secret.encrypt(key, inputs[name]);
+        next.secrets[name] = await Vault.encrypt(key, inputs[name]);
       }
+      next.secretsV = 2;
     }
-    // 已启用加密时，绝不把明文写回磁盘。
-    if (next.security.enabled) {
+    // 已加密时，绝不把明文写回磁盘。
+    if (next.secretsV) {
       for (const field of SECRET_FIELDS) writePath(next, field.path, '');
     }
     await writeSettings(next);
@@ -967,30 +962,34 @@
   // 读取并解密全部敏感字段；只在调用方即将使用时临时解密。
   Storage.loadSecrets = async function () {
     const settings = await Storage.loadSettings();
-    if (!settings.security.enabled) {
-      const err = new Error(hasPlaintextSecrets(settings)
-        ? '检测到未加密的凭据：请先在「设置 → 主密码与本地加密」设置主密码完成迁移'
-        : '请先在「设置 → 主密码与本地加密」设置主密码');
-      err.code = 'setup-required';
+    if (settings.secretsV === 1) {
+      const err = new Error('检测到旧版主密码加密的数据：请先在「设置 → 本地加密」完成一次性迁移');
+      err.code = 'legacy';
       throw err;
     }
-    const key = await Secret.ensureKey(settings.security);
-    if (!key) {
-      const err = new Error('主密码已锁定：请先在设置中解锁');
-      err.code = 'locked';
-      throw err;
+    // 历史明文凭据（主密码功能出现之前的旧版本）：自动用保险库密钥加密，无需用户介入。
+    if (hasPlaintextSecrets(settings)) {
+      await migratePlaintextSecrets();
+      return Storage.loadSecrets();
     }
     const out = {};
+    const envelopes = settings.secrets || {};
+    const names = Object.keys(envelopes).filter((name) => envelopes[name]);
+    if (!names.length) {
+      for (const field of SECRET_FIELDS) out[field.name] = '';
+      return out;
+    }
+    const key = await Vault.ensureKey();
     for (const field of SECRET_FIELDS) {
-      const envelope = settings.secrets[field.name];
+      const envelope = envelopes[field.name];
       if (!envelope) {
         out[field.name] = '';
         continue;
       }
       try {
-        out[field.name] = await Secret.decrypt(key, envelope);
+        out[field.name] = await Vault.decrypt(key, envelope);
       } catch (e) {
-        const err = new Error('凭据解密失败：主密码可能不正确或加密数据已损坏');
+        const err = new Error('凭据解密失败：本地密钥可能已被重置，请重新填写凭据');
         err.code = 'decrypt';
         throw err;
       }
@@ -998,105 +997,75 @@
     return out;
   };
 
-  Storage.setupMasterPassword = async function (password) {
-    const value = String(password || '');
-    if (value.length < 8) throw new Error('主密码至少需要 8 位');
+  // 旧版明文（无 security 段的早期版本）静默迁移到保险库加密；失败回滚，不丢数据。
+  async function migratePlaintextSecrets() {
     const settings = await Storage.loadSettings();
-    if (settings.security.enabled) throw new Error('已经设置过主密码，请使用「更换主密码」');
-    const created = await Secret.create(value);
+    if (settings.secretsV === 1 || !hasPlaintextSecrets(settings)) return settings;
+    const key = await Vault.ensureKey();
     const secrets = {};
     for (const field of SECRET_FIELDS) {
       const plain = readPath(settings, field.path);
-      if (plain) secrets[field.name] = await Secret.encrypt(created.key, plain);
+      if (plain) secrets[field.name] = await Vault.encrypt(key, plain);
     }
-    const check = await Secret.encrypt(created.key, Secret.CANARY);
     const next = normalizeSettings({
       ...settings,
       secrets,
-      security: {
-        enabled: true,
-        version: 1,
-        kdf: 'PBKDF2-SHA256',
-        iterations: created.iterations,
-        salt: created.salt,
-        check,
-        autoLockMinutes: settings.security.autoLockMinutes || 0
-      }
+      secretsV: 2,
+      security: null
     });
-    // 一次性原子写入：失败时旧设置与明文凭据保持原样，不会出现半迁移状态。
     await writeSettings(next);
-    await Secret.adopt(created.key, created.salt);
     return next;
-  };
+  }
+  Storage.migratePlaintextSecrets = migratePlaintextSecrets;
 
-  Storage.changeMasterPassword = async function (currentPassword, newPassword) {
-    const value = String(newPassword || '');
-    if (value.length < 8) throw new Error('新主密码至少需要 8 位');
+  // 旧版主密码数据的一次性迁移：输入旧密码 → 解出明文 → 立即用保险库密钥重封装。
+  // 原子写入；失败时旧密文原样保留，可重试，绝不丢数据。
+  Storage.migrateLegacySecrets = async function (password) {
     const settings = await Storage.loadSettings();
-    if (!settings.security.enabled) throw new Error('尚未设置主密码');
-    const oldKey = await Secret.verify(currentPassword, settings.security);
+    if (!settings.security || !settings.security.enabled) {
+      return { migrated: false, reason: 'no-legacy' };
+    }
+    const legacyKey = await Vault.verifyLegacyPassword(password, settings.security);
     const plain = {};
     for (const field of SECRET_FIELDS) {
       const envelope = settings.secrets[field.name];
       if (!envelope) continue;
-      plain[field.name] = await Secret.decrypt(oldKey, envelope);
+      plain[field.name] = await Vault.decryptLegacy(legacyKey, envelope);
     }
-    const created = await Secret.create(value);
+    const vaultKey = await Vault.ensureKey();
     const secrets = {};
     for (const name of Object.keys(plain)) {
-      secrets[name] = await Secret.encrypt(created.key, plain[name]);
+      secrets[name] = await Vault.encrypt(vaultKey, plain[name]);
     }
-    const check = await Secret.encrypt(created.key, Secret.CANARY);
     const next = normalizeSettings({
       ...settings,
       secrets,
-      security: {
-        ...settings.security,
-        iterations: created.iterations,
-        salt: created.salt,
-        check
-      }
+      secretsV: 2,
+      security: null
     });
     await writeSettings(next);
-    await Secret.adopt(created.key, created.salt);
-    return next;
+    return { migrated: true, count: Object.keys(secrets).length };
   };
 
-  // 清除主密码：同时丢弃已加密凭据（之后需要重新填写），绝不回退为明文保存。
-  Storage.clearMasterPassword = async function () {
+  // 是否需要旧版迁移（设置页据此显示一次性迁移卡片）。
+  Storage.needsLegacyMigration = async function () {
     const settings = await Storage.loadSettings();
-    if (!settings.security.enabled) return settings;
-    const key = await Secret.ensureKey(settings.security);
-    if (!key) throw new Error('主密码已锁定：请先解锁后再清除');
+    return !!(settings.security && settings.security.enabled && settings.secretsV === 1);
+  };
+
+  // 清除本地密钥：丢弃保险库并删除全部已加密凭据（凭据需重新填写，不可逆）。
+  // 旧版主密码残留数据也一并清除（不再需要旧密码）。
+  Storage.clearVaultAndSecrets = async function () {
+    const settings = await Storage.loadSettings();
     const next = normalizeSettings({
       ...settings,
       secrets: {},
-      security: {
-        enabled: false,
-        version: 1,
-        kdf: 'PBKDF2-SHA256',
-        iterations: DEFAULT_SETTINGS.security.iterations,
-        salt: '',
-        check: null,
-        autoLockMinutes: settings.security.autoLockMinutes || 0
-      }
+      secretsV: 0,
+      security: null
     });
     for (const field of SECRET_FIELDS) writePath(next, field.path, '');
     await writeSettings(next);
-    await Secret.lock();
-    return next;
-  };
-
-  Storage.setAutoLockMinutes = async function (minutes) {
-    const settings = await Storage.loadSettings();
-    const next = normalizeSettings({
-      ...settings,
-      security: {
-        ...settings.security,
-        autoLockMinutes: Math.max(0, Math.min(240, Number(minutes) || 0))
-      }
-    });
-    await writeSettings(next);
+    await Vault.clear();
     return next;
   };
 

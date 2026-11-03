@@ -1,6 +1,16 @@
 # Open Collections 开发进度记录
 
-> 最后更新：2026-11-03 · 状态：跨分组拖拽、AI 收件箱开关、同链接去重已实现，待真实 AI 接口联调
+> 最后更新：2026-11-03 · 状态：阶段一（免密本地加密）完成，待阶段二（WebDAV 同步范围）
+
+## 2026-11-03 阶段一：彻底移除主密码，改为免密本地加密
+
+- 删除全部主密码 UI 与逻辑：设置/解锁弹窗、手动/空闲自动锁定、「每次启动要求输入」路径、`security-auto-lock` 设置、`Secret.lock/unlock/restore/isUnlocked` API 及 `Storage.setupMasterPassword/changeMasterPassword/clearMasterPassword/setAutoLockMinutes`。
+- 改为免密保险库（`js/secret.js` 重写为 Vault）：首次保存凭据自动生成随机 256 位保险库密钥，用同样随机生成的本机设备密钥封装后存 `openpocket:vault`（schema 2）；WebDAV 用户名/密码、AI API Key 用保险库密钥 AES-GCM 逐字段加密（`secretsV=2`），启动自动解封，全程无密码。
+- 一次性迁移：`secretsV=1`（检测到旧版 `security.enabled`）时设置页显示迁移卡片，输入旧主密码（PBKDF2-SHA256 60 万次派生验证 canary）解出全部凭据后立即用保险库密钥重封装；跳过或解不开时旧密文原样保留、保持「未迁移」标记，读取/写入凭据给出可读迁移提示（`code:'legacy'`），绝不清空数据。无主密码数据的用户直接跳过。
+- 保留「清除本地密钥」（confirm 二次确认）：删除保险库记录与全部已加密凭据（`secretsV=0`），不回退明文，不可恢复；不保留「上锁」按钮。
+- 后台定时同步闹钟条件去掉 `security.enabled`，凭据缺失或未迁移由同步路径抛出可读错误。
+- 文档同步：README（本地加密/威胁模型/存储表/已知限制/目录结构/验证计数）、docs/index.html 隐私政策（中英第 2/6/7 节与权限段）、RELEASE.md（商店描述中英、隐私政策文本）、store-assets/submission-checklist.md（storage justification、认证信息、政策要点、商店描述、认证备注）统一改为免密模型并如实写明威胁模型。
+- 验证：重写安全测试为 58 项断言（往返加解密、磁盘记录独立解封、无明文残留、无密码提示路径、旧明文自动迁移、旧主密码数据迁移成功/错误拒绝/跳过保留、密钥丢失解密失败提示、清除密钥、导出不含密钥、控制台无密钥）；ui-test 与 ai-inbox-test 移除主密码流程；13 组测试全部通过（约 440 项断言）。
 
 ## 2026-11-03 调整
 

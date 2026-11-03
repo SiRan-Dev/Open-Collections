@@ -371,7 +371,7 @@ async function rescheduleAutoSync() {
   const settings = await Storage.loadSettings();
   await chrome.alarms.clear(AUTO_SYNC_ALARM);
   if (settings.webdav && settings.webdav.enabled && settings.webdav.autoSync &&
-    settings.webdav.url && settings.security && settings.security.enabled) {
+    settings.webdav.url) {
     const minutes = Math.max(5, Number(settings.webdav.intervalMinutes) || 30);
     chrome.alarms.create(AUTO_SYNC_ALARM, { periodInMinutes: minutes });
   }
