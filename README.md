@@ -2,6 +2,7 @@
 
 本地优先的网页收藏与整理扩展（Chromium MV3，Edge / Chrome 114+）。替代 Edge 已移除的「集锦」，并融合 OneTab 式批量收藏：收藏当前页、批量收进标签页、保存网页选区为摘录，再用可选的 AI 按固定粗分类自动归组。数据默认只存在本机，可选 WebDAV 同步到**你自己的**服务器。无账号、无遥测、无远程代码、GPLv3 开源。
 
+![侧边栏（380px 视口模拟，演示数据）](docs/assets/screenshots/sidebar.png)
 ![独立管理窗口（演示数据）](docs/assets/screenshots/standalone.png)
 ![AI 整理预览（演示数据，mock 响应）](docs/assets/screenshots/ai-preview.png)
 
