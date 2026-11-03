@@ -2628,6 +2628,8 @@
         toast('未获得访问该 AI 接口的网络权限', 'error');
         return;
       }
+      // 等待授权期间抽屉可能已被关闭（或功能被关闭/其他窗口禁用），此时不得重新发起请求。
+      if (runId !== state.aiRunId) return;
 
       runId = ++state.aiRunId;
       const controller = new AbortController();
@@ -2700,10 +2702,9 @@
       $('ai-error-msg').textContent = e.message || '整理失败';
       renderAiState('error');
     } finally {
-      if (runId === state.aiRunId) {
-        state.aiAbort = null;
-        btn.disabled = false;
-      }
+      if (runId === state.aiRunId) state.aiAbort = null;
+      // 无论本轮是否已被取消，按钮都要恢复可用（取消时不会再有新的运行接手）。
+      btn.disabled = false;
     }
   }
 
