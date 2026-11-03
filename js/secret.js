@@ -103,6 +103,27 @@
   }
 
   let memoryKey = null;
+  let ensurePromise = null;
+
+  // 首次创建 / 解封必须串行：两个上下文同时判断“没有保险库”会各自生成一把密钥，
+  // 后写入的记录覆盖先写入的，先写入一方加密的凭据将永远无法解密。
+  function withVaultLock(task) {
+    const nav = typeof navigator !== 'undefined' ? navigator : null;
+    if (nav && nav.locks && typeof nav.locks.request === 'function') {
+      return Promise.resolve(nav.locks.request('openpocket:vault-key', () => Promise.resolve().then(task)));
+    }
+    return Promise.resolve().then(task);
+  }
+
+  async function ensureKeyNow() {
+    const record = await readVaultRaw();
+    if (!record) {
+      await createVault();
+      return memoryKey;
+    }
+    memoryKey = await unwrapVault(record);
+    return memoryKey;
+  }
 
   // 首次运行创建保险库：随机设备密钥 + 随机保险库密钥（用设备密钥封装）。
   async function createVault() {
@@ -142,13 +163,9 @@
     // 启动自动解封；无保险库时自动创建。全程无感。
     async ensureKey() {
       if (memoryKey) return memoryKey;
-      const record = await readVaultRaw();
-      if (!record) {
-        await createVault();
-        return memoryKey;
-      }
-      memoryKey = await unwrapVault(record);
-      return memoryKey;
+      if (ensurePromise) return ensurePromise;
+      ensurePromise = withVaultLock(ensureKeyNow).finally(() => { ensurePromise = null; });
+      return ensurePromise;
     },
 
     isReady() {
