@@ -1226,6 +1226,100 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  // ---- 设置导出 / 导入 ----
+  async function exportSettings() {
+    try {
+      const text = await Storage.exportSettingsJSON();
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const name = `open-collections-settings-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+      downloadFile(text, name, 'application/json');
+      toast('已导出设置（不含凭据与密钥）', 'success');
+    } catch (e) {
+      toast('导出失败：' + (e.message || e), 'error');
+    }
+  }
+
+  let pendingSettingsImport = null;
+
+  function closeSettingsImportDrawer() {
+    const drawer = $('settings-import-drawer');
+    if (drawer) drawer.classList.add('hidden');
+    pendingSettingsImport = null;
+  }
+
+  function formatSettingValue(v) {
+    if (v === undefined) return '（默认）';
+    if (Array.isArray(v)) return v.length ? v.join('、') : '（空列表）';
+    if (typeof v === 'boolean') return v ? '开' : '关';
+    return String(v);
+  }
+
+  async function handleSettingsImportFile(file) {
+    if (!file) return;
+    let obj;
+    try {
+      obj = JSON.parse(await file.text());
+    } catch (e) {
+      toast('导入失败：文件不是有效的 JSON（' + e.message + '）', 'error');
+      return;
+    }
+    let parsed;
+    try {
+      parsed = Storage.validateSettingsExport(obj);
+    } catch (e) {
+      toast('导入失败：' + (e.message || e), 'error');
+      return;
+    }
+    const diffs = await Storage.diffSettingsExport(parsed.settings);
+    pendingSettingsImport = parsed;
+    const when = parsed.exportedAt ? new Date(parsed.exportedAt).toLocaleString() : '未知时间';
+    const sensitiveText = Object.entries(parsed.sensitive)
+      .map(([k, v]) => `${k} ${v === 'configured' ? '已配置' : '未配置'}`)
+      .join('；') || '无敏感项状态标记';
+    $('settings-import-summary').textContent =
+      `导出时间 ${when}${parsed.appVersion ? ` · 来自 v${parsed.appVersion}` : ''} · 与当前设置差异 ${diffs.length} 项 · ${sensitiveText}`;
+    const list = $('settings-import-diff');
+    list.textContent = '';
+    if (!diffs.length) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = '文件中的设置与当前设置完全一致，可直接合并（不会改动任何值）。';
+      list.appendChild(p);
+    } else {
+      for (const d of diffs) {
+        const item = document.createElement('div');
+        item.className = 'settings-diff-item';
+        const title = document.createElement('div');
+        title.className = 'settings-diff-key';
+        title.textContent = d.key;
+        const desc = document.createElement('div');
+        desc.className = 'settings-diff-values';
+        desc.textContent = `${formatSettingValue(d.oldValue)} → ${formatSettingValue(d.newValue)}`;
+        item.appendChild(title);
+        item.appendChild(desc);
+        list.appendChild(item);
+      }
+    }
+    $('settings-import-drawer').classList.remove('hidden');
+  }
+
+  async function applySettingsImport(mode) {
+    if (!pendingSettingsImport) return;
+    if (mode === 'overwrite' &&
+      !confirm('覆盖导入会把文件中未出现的设置项恢复为默认值（凭据除外）。确定继续？')) {
+      return;
+    }
+    try {
+      const res = await Storage.applySettingsExport(pendingSettingsImport.settings, mode);
+      closeSettingsImportDrawer();
+      await loadSettingsToForm();
+      toast(`已${mode === 'overwrite' ? '覆盖' : '合并'}导入设置：变更 ${res.applied.length} 项；导入前已自动备份（可在本地存储中恢复）`, 'success');
+    } catch (e) {
+      toast('导入失败：' + (e.message || e), 'error');
+    }
+  }
+
   // ---- WebDAV 设置与同步 ----
   let wdSettings = null;
 
@@ -2532,6 +2626,17 @@
       e.target.value = '';
     });
 
+    // 设置导出 / 导入
+    $('btn-export-settings').addEventListener('click', exportSettings);
+    $('btn-import-settings').addEventListener('click', () => $('file-import-settings').click());
+    $('file-import-settings').addEventListener('change', (e) => {
+      handleSettingsImportFile(e.target.files[0]);
+      e.target.value = '';
+    });
+    $('btn-settings-import-merge').addEventListener('click', () => applySettingsImport('merge'));
+    $('btn-settings-import-overwrite').addEventListener('click', () => applySettingsImport('overwrite'));
+    $('btn-settings-import-cancel').addEventListener('click', closeSettingsImportDrawer);
+
     // 收藏行为
     $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
     $('behavior-batch-daily').addEventListener('change', updateAiInboxOptionVisibility);
@@ -2599,6 +2704,7 @@
         if (name === 'ai') closeAiDrawer();
         else if (name === 'dedupe') closeDedupeDrawer();
         else if (name === 'consent') closeConsent();
+        else if (name === 'settings-import') closeSettingsImportDrawer();
         else closeDrawer(name);
       });
     });
@@ -2614,6 +2720,7 @@
         closeAiDrawer();
         closeDedupeDrawer();
         closeConsent();
+        closeSettingsImportDrawer();
       }
     });
 

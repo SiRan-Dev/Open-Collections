@@ -1472,5 +1472,161 @@
     });
   };
 
+  // ---- 设置导出 / 导入（阶段三）----
+  const SETTINGS_EXPORT_SCHEMA = 1;
+  Storage.SETTINGS_EXPORT_SCHEMA = SETTINGS_EXPORT_SCHEMA;
+
+  // 可导出的设置键（白名单）：不含任何凭据、密文、密钥或设备专属值。
+  const EXPORTABLE_SETTINGS_KEYS = [
+    'webdav.enabled', 'webdav.url', 'webdav.remoteDir', 'webdav.autoSync', 'webdav.intervalMinutes',
+    'webdav.syncScope.aiCache', 'webdav.syncScope.backups',
+    'behavior.batchCollectDaily', 'behavior.aiIncludeInbox', 'behavior.allowDuplicateLinks',
+    'ai.enabled', 'ai.baseUrl', 'ai.model', 'ai.categories'
+  ];
+  Storage.EXPORTABLE_SETTINGS_KEYS = EXPORTABLE_SETTINGS_KEYS.slice();
+
+  // 敏感项只导出「已配置/未配置」状态标记，绝不含值。
+  const SENSITIVE_MARKERS = ['webdav.username', 'webdav.password', 'ai.apiKey'];
+
+  // 导出全部设置：schemaVersion + 导出时间 + 应用版本 + 设置项 + 敏感项状态标记。
+  Storage.exportSettingsJSON = async function () {
+    const settings = await Storage.loadSettings();
+    const out = {};
+    for (const keyPath of EXPORTABLE_SETTINGS_KEYS) {
+      writeKeyPath(out, keyPath, Utils.clone(readKeyPath(settings, keyPath)));
+    }
+    const sensitive = {};
+    for (const keyPath of SENSITIVE_MARKERS) {
+      sensitive[keyPath] = readKeyPath(settings, keyPath) ? 'configured' : 'empty';
+    }
+    let appVersion = '';
+    try {
+      if (global.chrome && chrome.runtime && chrome.runtime.getManifest) {
+        appVersion = chrome.runtime.getManifest().version || '';
+      }
+    } catch (e) {}
+    return JSON.stringify({
+      app: 'open-collections',
+      type: 'settings',
+      schemaVersion: SETTINGS_EXPORT_SCHEMA,
+      exportedAt: Utils.now(),
+      appVersion,
+      settings: out,
+      sensitive
+    }, null, 2);
+  };
+
+  // 校验导入文件：合法返回 { settings, sensitive, exportedAt, appVersion }；非法/未来版本抛错并说明原因。
+  Storage.validateSettingsExport = function (obj) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      throw new Error('文件不是有效的 JSON 对象');
+    }
+    if (obj.app !== 'open-collections' || obj.type !== 'settings') {
+      throw new Error('这不是 Open Collections 的设置导出文件（缺少 app/type 标识）');
+    }
+    const v = Number(obj.schemaVersion);
+    if (!v) throw new Error('文件缺少 schemaVersion，无法识别版本');
+    if (v > SETTINGS_EXPORT_SCHEMA) {
+      throw new Error(`该文件由更新版本的扩展导出（schema v${v}，本端支持 v${SETTINGS_EXPORT_SCHEMA}），请先升级扩展再导入`);
+    }
+    if (!obj.settings || typeof obj.settings !== 'object') {
+      throw new Error('文件缺少 settings 字段');
+    }
+    // 只接受白名单内的键，多余键忽略。
+    const settings = {};
+    let found = 0;
+    for (const keyPath of EXPORTABLE_SETTINGS_KEYS) {
+      const value = readKeyPath(obj.settings, keyPath);
+      if (value === undefined) continue;
+      writeKeyPath(settings, keyPath, Utils.clone(value));
+      found++;
+    }
+    if (!found) throw new Error('文件中没有任何可识别的设置项');
+    return {
+      settings,
+      sensitive: obj.sensitive && typeof obj.sensitive === 'object' ? obj.sensitive : {},
+      exportedAt: Number(obj.exportedAt) || 0,
+      appVersion: typeof obj.appVersion === 'string' ? obj.appVersion : ''
+    };
+  };
+
+  // 差异预览：导入文件 vs 本地当前值。返回 [{ key, oldValue, newValue }]（仅不同的键）。
+  Storage.diffSettingsExport = function (incomingSettings) {
+    return Storage.loadSettings().then((local) => {
+      const diffs = [];
+      for (const keyPath of EXPORTABLE_SETTINGS_KEYS) {
+        const newValue = readKeyPath(incomingSettings, keyPath);
+        if (newValue === undefined) continue;
+        const oldValue = readKeyPath(local, keyPath);
+        if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+          diffs.push({ key: keyPath, oldValue, newValue });
+        }
+      }
+      return diffs;
+    });
+  };
+
+  // 应用导入的设置：mode='merge' 只写文件中出现的键；'overwrite' 额外把未出现的键恢复默认。
+  // 应用前写设置专用备份（含同步时间戳，可完整回滚）；写入键并更新同步时间戳，便于后续 WebDAV 传播。
+  Storage.applySettingsExport = async function (incomingSettings, mode) {
+    const local = await Storage.loadSettings();
+    const localMeta = await loadSettingsMeta();
+    const backupKey = BACKUP_PREFIX + Date.now() + '-settings-import-' + Math.random().toString(36).slice(2, 8);
+    await new Promise((resolve, reject) => {
+      chrome.storage.local.set({
+        [backupKey]: { __settingsBackup: true, settings: local, meta: localMeta }
+      }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+    const next = Utils.clone(local);
+    const applied = [];
+    const stampNow = Utils.now();
+    const meta = await loadSettingsMeta();
+    for (const keyPath of EXPORTABLE_SETTINGS_KEYS) {
+      const newValue = readKeyPath(incomingSettings, keyPath);
+      if (newValue === undefined) {
+        if (mode === 'overwrite') {
+          const defaultValue = readKeyPath(DEFAULT_SETTINGS, keyPath);
+          if (JSON.stringify(readKeyPath(next, keyPath)) !== JSON.stringify(defaultValue)) {
+            writeKeyPath(next, keyPath, Utils.clone(defaultValue));
+            applied.push(keyPath);
+          }
+          meta.keys[keyPath] = stampNow;
+        }
+        continue;
+      }
+      if (JSON.stringify(readKeyPath(next, keyPath)) !== JSON.stringify(newValue)) {
+        writeKeyPath(next, keyPath, Utils.clone(newValue));
+        applied.push(keyPath);
+      }
+      meta.keys[keyPath] = stampNow;
+    }
+    // 凭据与加密状态不受导入影响，始终保持本地值。
+    next.webdav.username = local.webdav.username;
+    next.webdav.password = local.webdav.password;
+    next.ai.apiKey = local.ai.apiKey;
+    next.security = local.security;
+    next.secrets = local.secrets;
+    next.secretsV = local.secretsV;
+    await writeSettings(normalizeSettings(next));
+    await saveSettingsMeta(meta);
+    return { backupKey, applied };
+  };
+
+  // 回滚设置导入：从设置专用备份恢复完整设置与同步时间戳。
+  Storage.restoreSettingsBackup = async function (key) {
+    const raw = await new Promise((resolve) => {
+      chrome.storage.local.get(key, (items) => resolve(items && items[key]));
+    });
+    if (!raw || raw.__settingsBackup !== true || !raw.settings) {
+      throw new Error('设置备份不存在或格式不正确');
+    }
+    await writeSettings(normalizeSettings(raw.settings));
+    if (raw.meta) await saveSettingsMeta(raw.meta);
+    return true;
+  };
+
   global.Storage = Storage;
 })(typeof self !== 'undefined' ? self : this);

@@ -1,6 +1,13 @@
 # Open Collections 开发进度记录
 
-> 最后更新：2026-11-03 · 状态：阶段一（免密本地加密）、阶段二（WebDAV 同步范围）完成，待阶段三（设置导出/导入）
+> 最后更新：2026-11-03 · 状态：阶段一（免密加密）、阶段二（同步范围）、阶段三（设置导出/导入）完成，待阶段四（设置页 UI 重写）
+
+## 2026-11-03 阶段三：一键导出所有设置 + 导入设置
+
+- 导出：`Storage.exportSettingsJSON()` 生成 `{app:'open-collections', type:'settings', schemaVersion:1, exportedAt, appVersion, settings, sensitive}`；settings 只含白名单键（webdav 连接/同步范围、behavior、ai 接口/模型/分类表），sensitive 只含 WebDAV 用户名/密码与 AI API Key 的「configured/empty」状态标记；绝不含凭据值、密文、密钥或设备专属值。文件名 `open-collections-settings-YYYYMMDD-HHmm.json`。
+- 导入：`validateSettingsExport`（非法结构/缺 schemaVersion/未来版本/无识别键逐类拒绝并说明；白名单外键忽略）→ `diffSettingsExport`（逐键 old→new 差异）→ UI 弹出差异预览浮层（settings-import-drawer，含敏感项状态摘要）→「合并」（只应用文件中出现的键）或「覆盖」（未出现键恢复默认，confirm 二次确认）→ `applySettingsExport`（应用前写设置专用备份 `{__settingsBackup, settings, meta}`，凭据与加密状态始终保持本地值，导入键更新同步时间戳随 WebDAV 传播）→ `restoreSettingsBackup` 可完整回滚。
+- 设置页「数据导入 / 导出」区新增「导出全部设置 / 导入设置」按钮与隐藏 file-input；oc-dom-check 同步覆盖新 DOM id。
+- 验证：新增 oc-settings-io-test 47 项断言；修复 oc-compliance-test 的存储写入与 UI 更新轮询竞态（waitFor 条件合并按钮状态）；15 组测试全部通过。
 
 ## 2026-11-03 阶段二：WebDAV 同步范围与 v2 远端结构
 

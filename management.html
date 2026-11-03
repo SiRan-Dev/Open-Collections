@@ -238,6 +238,12 @@
           </div>
           <input id="file-import" type="file" accept="application/json,.json" class="hidden" />
           <p class="hint">覆盖导入会先自动备份当前数据到本地存储。合并导入按条目 ID 冲突时取较新者。</p>
+          <div class="settings-actions">
+            <button id="btn-export-settings" class="btn btn-ghost">导出全部设置</button>
+            <button id="btn-import-settings" class="btn btn-ghost">导入设置</button>
+          </div>
+          <input id="file-import-settings" type="file" accept="application/json,.json" class="hidden" />
+          <p class="hint">设置导出包含全部设置项与「已配置/未配置」状态标记，不含任何凭据、API Key 或本机专属值；导入前会显示差异预览并自动备份，可合并或覆盖。</p>
         </section>
 
         <section class="settings-section">
@@ -496,6 +502,27 @@
         <div class="settings-actions">
           <button id="btn-consent-confirm" class="btn btn-primary">确认启用</button>
           <button id="btn-consent-cancel" class="btn btn-ghost">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置导入差异预览 -->
+  <div id="settings-import-drawer" class="drawer hidden">
+    <div class="drawer-mask" data-close="settings-import"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <h2>导入设置</h2>
+        <button class="btn-icon" data-close="settings-import" aria-label="关闭导入设置"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="drawer-body">
+        <p id="settings-import-summary" class="ai-summary"></p>
+        <div id="settings-import-diff" class="dedupe-list"></div>
+        <p class="hint">「合并」只应用文件中出现的设置项；「覆盖」还会把文件中未出现的设置项恢复为默认值。两种方式都不会改动 WebDAV 凭据与 AI API Key。应用前会自动备份当前设置。</p>
+        <div class="settings-actions">
+          <button id="btn-settings-import-merge" class="btn btn-primary">合并导入</button>
+          <button id="btn-settings-import-overwrite" class="btn btn-ghost">覆盖导入</button>
+          <button id="btn-settings-import-cancel" class="btn btn-ghost">取消</button>
         </div>
       </div>
     </div>
