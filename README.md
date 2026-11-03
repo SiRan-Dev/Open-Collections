@@ -26,12 +26,16 @@
 
 待上架。商店版本与仓库一致。
 
-### 本地加载（开发者模式）
+### 本地安装（拖入 zip）
 
-1. 下载或克隆本仓库：`git clone https://github.com/SiRan-Dev/Open-Collections.git`
-2. 打开 `edge://extensions`（Edge）或 `chrome://extensions`（Chrome），开启「开发人员模式」
-3. 点「加载解压缩的扩展」，选择仓库根目录（含 `manifest.json`）
+1. 从 [Releases](https://github.com/SiRan-Dev/Open-Collections/releases/latest) 下载发布包 zip（如 `open-collections-1.1.1.zip`）
+2. 打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启「开发者模式」
+3. 把 zip 文件直接拖入页面即可安装
 4. 点击工具栏的 Open Collections 图标即可开始使用
+
+若浏览器不接受拖入，解压 zip 后点击「加载已解压的扩展程序」，选择解压出来的文件夹。
+
+直接改源码时，也可以克隆仓库（`git clone https://github.com/SiRan-Dev/Open-Collections.git`），在扩展页面点「加载已解压的扩展程序」选择仓库根目录（含 `manifest.json`）。
 
 ## 使用说明
 

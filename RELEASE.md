@@ -11,6 +11,10 @@
 | 版本号 | `manifest.json` → `version: "1.1.1"` | 「关于」页自动读取，无需另改 |
 | 图标 | `icons/icon16|32|48|128.png` | 由 `node icons/make-icons.js` 生成 |
 
+### 本地安装（拖入 zip）
+
+下载发布包 zip 后，打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启「开发者模式」，把 zip 文件直接拖入页面即可安装。若浏览器不接受拖入，解压 zip 后点击「加载已解压的扩展程序」，选择解压出来的文件夹。
+
 ## 一、提交前自检
 
 已完成的机器校验：
@@ -262,5 +266,5 @@ Copy-Item icons/icon16.png, icons/icon32.png, icons/icon48.png, icons/icon128.pn
 Compress-Archive -Path "$stage/*" -DestinationPath "dist/open-collections-$v.zip"
 ```
 
-4. 在 Edge 里「加载已解压的扩展程序」指向 `.tmp/package` 自测，确认无误再上传新包。
+4. 把 `dist/open-collections-$v.zip` 拖到 `edge://extensions` 自测（拖入不被接受时，解压后「加载已解压的扩展程序」指向 `.tmp/package`），确认无误再上传新包。
 5. 商店页面的截图与描述若功能有变化，同步更新 `store-assets/` 与本文。
