@@ -111,6 +111,8 @@
   .feat li { margin: 5px 0; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
   @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  /* 竖构图截图限宽，避免撑满容器 */
+  .shot.slim { max-width: 400px; margin: 0 auto; }
 
   /* 安装 */
   .install ol { padding-left: 22px; font-size: 15px; }
@@ -206,8 +208,8 @@
       <h2>侧边栏里完成全部整理</h2>
       <p class="lead">点击工具栏图标打开侧边栏：分组、搜索、拖拽排序、跨组移动、批量打开，一气呵成。宽屏时也可以打开独立管理窗口。</p>
       <div class="grid2">
-        <figure class="shot">
-          <img src="assets/screenshots/sidebar.png" alt="侧边栏界面（380px 视口模拟，演示数据）" />
+        <figure class="shot slim">
+          <img src="assets/screenshots/sidebar.png" width="380" alt="侧边栏界面（380px 视口模拟，演示数据）" />
           <figcaption>侧边栏（380px 视口模拟；演示数据）</figcaption>
         </figure>
         <figure class="shot">
@@ -221,7 +223,7 @@
   <section class="feat">
     <div class="wrap">
       <h2>AI 只按你的分类表整理</h2>
-      <p class="lead">固定六项粗分类（可改）：开发编程 / 学习 / 娱乐 / 生活 / 资讯 / 其他。AI 不能自造分类；整理前预览每个分组的内容与理由，显示本次新增请求与缓存复用数量，应用前自动备份，结果可撤销。</p>
+      <p class="lead">固定六项粗分类（可改）：开发 / 学习 / 娱乐 / 生活 / 资讯 / 其他。AI 不能自造分类；整理前预览每个分组的内容与理由，显示本次新增请求与缓存复用数量，应用前自动备份，结果可撤销。</p>
       <figure class="shot">
         <img src="assets/screenshots/ai-preview.png" alt="AI 整理预览（演示数据，接口响应为 mock）" />
         <figcaption>AI 整理预览：分类方案 + 新增/缓存/去重统计（演示数据；接口响应为 mock）</figcaption>

@@ -5,7 +5,7 @@
   const Utils = {};
 
   // AI 默认可编辑的粗分类表；「其他」始终作为兜底保留。
-  Utils.DEFAULT_AI_CATEGORIES = ['开发编程', '学习', '娱乐', '生活', '资讯', '其他'];
+  Utils.DEFAULT_AI_CATEGORIES = ['开发', '学习', '娱乐', '生活', '资讯', '其他'];
 
   const pad2 = (n) => String(n).padStart(2, '0');
 

@@ -53,7 +53,7 @@ const groups = [
     card('c-sys-7', 'CSS 布局速查', 'https://csslayout.io/', { addedAt: now - 4 * DAY }),
     card('c-sys-8', 'CSS 布局速查', 'https://csslayout.io/', { addedAt: now - 4 * DAY + HOUR })
   ], { system: true }),
-  group('g-dev', '开发编程', '#0ea5e9', [
+  group('g-dev', '开发', '#0ea5e9', [
     card('c-dev-1', 'Vite 官方指南', 'https://vitejs.dev/guide/', { addedAt: now - 2 * DAY }),
     card('c-dev-2', 'Node.js API 文档', 'https://nodejs.org/api/', { addedAt: now - 5 * DAY }),
     card('c-dev-3', '正则表达式速查', 'https://regexlearn.com/zh-cn', { notes: '第三章的反向引用例子值得收藏', addedAt: now - 6 * DAY })
@@ -95,7 +95,7 @@ const commandsAll = Object.entries(manifest.commands || {}).map(([name, def]) =>
 const settingsSeed = {
   webdav: { enabled: false, url: '', username: '', password: '', remoteDir: '/open-collections', autoSync: false, intervalMinutes: 30, syncScope: { aiCache: false, backups: false } },
   behavior: { batchCollectDaily: true, aiIncludeInbox: false, allowDuplicateLinks: false },
-  ai: { enabled: true, baseUrl: 'https://api.demo.example.com/v1', apiKey: 'sk-demo-not-real', model: 'demo-model', categories: ['开发编程', '学习', '娱乐', '生活', '资讯', '其他'] },
+  ai: { enabled: true, baseUrl: 'https://api.demo.example.com/v1', apiKey: 'sk-demo-not-real', model: 'demo-model', categories: ['开发', '学习', '娱乐', '生活', '资讯', '其他'] },
   security: null, secretsV: 0, secrets: {}
 };
 
@@ -111,7 +111,7 @@ const AI_PLAN = JSON.stringify({
   summary: 'AI 建议归入 3 个分类，已固定条目不参与整理。',
   groups: [
     { name: '学习', cardIds: ['c1'], reason: '文档与教程' },
-    { name: '开发编程', cardIds: ['c2', 'c3'], reason: '框架与工具' },
+    { name: '开发', cardIds: ['c2', 'c3'], reason: '框架与工具' },
     { name: '娱乐', cardIds: ['c4'], reason: '视频内容' }
   ]
 });
@@ -260,7 +260,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.evaluate(async () => {
     const data = await Storage.load();
     const g = data.groups.find((x) => x.system);
-    const cats = ['开发编程', '学习', '娱乐', '生活', '资讯', '其他'];
+    const cats = ['开发', '学习', '娱乐', '生活', '资讯', '其他'];
     const uncached = g.cards.filter((c) => !c.deleted && !c.pinned).slice(0, 2);
     const entries = uncached.map((c) => ({ key: AI.cacheKey(c, cats), category: '学习' }));
     await Storage.saveAiCacheEntries(entries);

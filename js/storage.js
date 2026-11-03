@@ -104,6 +104,14 @@
         .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
       if (alive.length) alive[0].system = true;
     }
+    // 一次性迁移：默认分类「开发编程」更名为「开发」。仅当精确匹配且无同名冲突时执行；
+    // 与 normalize 的既有旧数据迁移同层（内存修正，下一次写盘时自然持久化），幂等无副作用。
+    const devOld = data.groups.find((g) => !g.deleted && g.name === '开发编程');
+    const devNew = data.groups.find((g) => !g.deleted && g.name === '开发');
+    if (devOld && !devNew) {
+      devOld.name = '开发';
+      devOld.updatedAt = Utils.now();
+    }
     if (!data.activeGroupId || !data.groups.find((g) => g.id === data.activeGroupId)) {
       data.activeGroupId = data.groups[0] ? data.groups[0].id : null;
     }
@@ -895,7 +903,11 @@
       allowDuplicateLinks: !!behavior.allowDuplicateLinks
     };
     const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
-    const categories = Utils.normalizeCategories(ai.categories);
+    // 迁移：默认分类「开发编程」更名为「开发」，存量分类表精确匹配项同步改名并去重。
+    const renamedCategories = Utils.normalizeCategories(ai.categories)
+      .map((c) => (c === '开发编程' ? '开发' : c))
+      .filter((c, i, arr) => arr.indexOf(c) === i);
+    const categories = renamedCategories;
     base.ai = {
       enabled: !!ai.enabled,
       baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl : '',
