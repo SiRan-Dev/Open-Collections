@@ -85,6 +85,15 @@
 
       <!-- 主内容 -->
       <main class="main-panel">
+        <div id="onboarding-banner" class="onboarding-banner hidden" role="note">
+          <div class="onboarding-text">
+            <strong>隐私提示：</strong>收藏仅保存在本机；AI 整理与云同步默认关闭，只有你在设置中启用后才会联网。
+            <a href="https://siran-dev.github.io/Open-Collections/" target="_blank" rel="noopener noreferrer">隐私政策</a>
+          </div>
+          <button id="btn-onboarding-close" class="btn-icon" aria-label="关闭隐私提示" title="关闭隐私提示">
+            <svg class="ico" aria-hidden="true"><use href="#i-x"/></svg>
+          </button>
+        </div>
         <div id="group-head" class="group-head hidden">
           <div class="group-title-row">
             <span id="group-color-dot" class="group-color-dot"></span>
@@ -259,6 +268,13 @@
             <input id="wd-url" class="text-input" type="text"
               placeholder="https://dav.example.com/remote.php/dav/files/user" />
           </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="wd-enabled" type="checkbox" />
+              启用 WebDAV 云同步（默认关闭）
+            </label>
+          </div>
+          <p class="hint">启用后才会发起网络请求；首次启用会展示发送内容与目标，确认后才写入启用状态。关闭后会立即停止定时任务并取消进行中的同步。</p>
           <div class="form-row">
             <label>用户名</label>
             <input id="wd-username" class="text-input" type="text" />
@@ -302,6 +318,13 @@
             <input id="ai-base-url" class="text-input" type="text" autocomplete="off"
               placeholder="https://api.deepseek.com/v1" />
           </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="ai-enabled" type="checkbox" />
+              启用 AI 自动整理（默认关闭）
+            </label>
+          </div>
+          <p class="hint">启用后才会调用接口；首次启用会展示发送内容、目标与截断长度，确认后才写入启用状态。关闭后会立即停止后续请求。</p>
           <div class="form-row">
             <label>API Key</label>
             <input id="ai-api-key" class="text-input" type="password" autocomplete="off" />
@@ -457,6 +480,25 @@
             <button id="btn-dedupe-undo" class="btn btn-primary">撤销清理</button>
             <button id="btn-dedupe-close" class="btn btn-ghost">关闭</button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 首次启用确认 -->
+  <div id="consent-drawer" class="drawer hidden">
+    <div class="drawer-mask" data-close="consent"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <h2 id="consent-title">启用前确认</h2>
+        <button class="btn-icon" data-close="consent" aria-label="关闭确认"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="drawer-body">
+        <p id="consent-text"></p>
+        <p class="hint">只有你确认后才会写入启用状态；之后可随时在设置中关闭，关闭后不再发起新请求。</p>
+        <div class="settings-actions">
+          <button id="btn-consent-confirm" class="btn btn-primary">确认启用</button>
+          <button id="btn-consent-cancel" class="btn btn-ghost">取消</button>
         </div>
       </div>
     </div>

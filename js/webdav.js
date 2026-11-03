@@ -5,6 +5,20 @@
 
   const REMOTE_FILE = 'open-collections-data.json';
 
+  function assertEnabled(settings) {
+    if (!settings || settings.enabled !== true) {
+      throw { code: 'disabled', message: 'WebDAV 同步未启用：请先在设置中启用并确认首次说明' };
+    }
+  }
+
+  function assertHttps(url) {
+    try {
+      Utils.requireHttpsUrl(url, 'WebDAV 服务器地址');
+    } catch (e) {
+      throw { code: 'https', message: e.message };
+    }
+  }
+
   function joinUrl(base, path) {
     base = String(base || '').replace(/\/+$/, '');
     path = String(path || '').replace(/^\/+/, '');
@@ -63,7 +77,25 @@
     }, options.headers || {});
     let resp;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), 20000) : null;
+    let timedOut = false;
+    let cancelled = false;
+    const timer = controller ? setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 20000) : null;
+    const external = options.signal || null;
+    const onAbort = () => {
+      cancelled = true;
+      if (controller) controller.abort();
+    };
+    if (controller && external) {
+      if (external.aborted) {
+        cancelled = true;
+        controller.abort();
+      } else {
+        external.addEventListener('abort', onAbort, { once: true });
+      }
+    }
     try {
       resp = await fetch(url, {
         method: options.method || 'GET',
@@ -73,12 +105,14 @@
         signal: controller ? controller.signal : undefined
       });
     } catch (e) {
-      if (controller && controller.signal.aborted) {
+      if (cancelled) throw { code: 'cancelled', message: '同步已取消' };
+      if (timedOut) {
         throw { code: 0, message: '请求超时（20 秒）：服务器无响应或网络过慢' };
       }
       throw classifyError(e, 0);
     } finally {
       if (timer) clearTimeout(timer);
+      if (external) external.removeEventListener('abort', onAbort);
     }
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
@@ -91,7 +125,8 @@
 
   // 测试连接：对远端目录做 PROPFIND。
   WebDAV.testConnection = async function (settings) {
-    if (!settings || !settings.url) throw { code: 0, message: '请填写 WebDAV 服务器地址' };
+    assertEnabled(settings);
+    assertHttps(settings && settings.url);
     if (!settings.username) throw { code: 0, message: '请填写用户名' };
     const granted = await ensureHostPermission(settings.url);
     if (!granted) throw { code: 0, message: '需要授权访问该服务器的网络权限' };
@@ -118,13 +153,17 @@
   };
 
   // 下载远端数据。
-  WebDAV.download = async function (settings) {
-    if (!settings || !settings.url) throw { code: 0, message: '请填写 WebDAV 服务器地址' };
+  WebDAV.download = async function (settings, options) {
+    assertEnabled(settings);
+    assertHttps(settings && settings.url);
     const granted = await ensureHostPermission(settings.url);
     if (!granted) throw { code: 0, message: '需要授权访问该服务器的网络权限' };
     const url = remoteFileUrl(settings);
     try {
-      const resp = await davRequest(url, settings, { method: 'GET' });
+      const resp = await davRequest(url, settings, {
+        method: 'GET',
+        signal: options && options.signal
+      });
       const text = await resp.text();
       if (!text) return null;
       try {
@@ -139,21 +178,24 @@
   };
 
   // 上传本地数据到远端。
-  WebDAV.upload = async function (settings, data) {
-    if (!settings || !settings.url) throw { code: 0, message: '请填写 WebDAV 服务器地址' };
+  WebDAV.upload = async function (settings, data, options) {
+    assertEnabled(settings);
+    assertHttps(settings && settings.url);
     const granted = await ensureHostPermission(settings.url);
     if (!granted) throw { code: 0, message: '需要授权访问该服务器的网络权限' };
+    const signal = options && options.signal;
     // 先确保目录存在。
     const dirUrl = joinUrl(settings.url, (settings.remoteDir || '/open-collections').replace(/^\/+|\/+$/g, '') + '/');
     try {
       await davRequest(dirUrl, settings, {
         method: 'PROPFIND',
+        signal,
         headers: { 'Depth': '0' },
         body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:displayname/></d:prop></d:propfind>'
       });
     } catch (e) {
       if (e.code === 404) {
-        await davRequest(dirUrl, settings, { method: 'MKCOL' });
+        await davRequest(dirUrl, settings, { method: 'MKCOL', signal });
       } else {
         throw e;
       }
@@ -162,6 +204,7 @@
     const body = JSON.stringify(data, null, 2);
     await davRequest(url, settings, {
       method: 'PUT',
+      signal,
       headers: { 'Content-Type': 'application/json' },
       body
     });
@@ -169,11 +212,15 @@
   };
 
   // 完整同步：备份本地 → 下载远端 → 合并 → 保存本地 → 上传。
-  WebDAV.runSync = async function (mode) {
+  WebDAV.runSync = async function (mode, opts) {
     mode = mode || 'sync';
+    opts = opts || {};
     const settings = await Storage.loadSettings();
     const wdConfig = settings.webdav || {};
-    if (!wdConfig.url) throw { code: 0, message: '请先在设置中填写 WebDAV 地址' };
+    if (wdConfig.enabled !== true) {
+      throw { code: 'disabled', message: 'WebDAV 同步未启用：请先在设置中启用并确认首次说明' };
+    }
+    assertHttps(wdConfig.url);
     // 凭据只在发请求前临时解密，不写入设置对象，也不参与上传内容。
     const secrets = await Storage.loadSecrets();
     const wd = Object.assign({}, wdConfig, {
@@ -181,6 +228,9 @@
       password: secrets.webdavPassword
     });
     if (!wd.username) throw { code: 0, message: '请先在设置中填写 WebDAV 用户名' };
+    if (opts.signal && opts.signal.aborted) {
+      throw { code: 'cancelled', message: '同步已取消' };
+    }
 
     // 同步前本地备份。
     const backupKey = await Storage.createBackup('sync-before');
@@ -188,7 +238,7 @@
 
     let remoteData = null;
     if (mode === 'sync' || mode === 'download') {
-      remoteData = await WebDAV.download(wd);
+      remoteData = await WebDAV.download(wd, { signal: opts.signal });
     }
 
     let merged;
@@ -206,12 +256,16 @@
       merged = Storage.mergeRemote(localData, remoteData);
     }
 
+    if (opts.signal && opts.signal.aborted) {
+      throw { code: 'cancelled', message: '同步已取消' };
+    }
+
     // 保存到本地。
     await Storage.save(merged);
 
     // 除「仅下载」外都回写远端，保证两端一致。
     if (mode !== 'download') {
-      await WebDAV.upload(wd, merged);
+      await WebDAV.upload(wd, merged, { signal: opts.signal });
     }
 
     // 清理旧备份，保留最近 10 份。

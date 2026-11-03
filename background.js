@@ -220,10 +220,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       return false;
     case 'webdav-sync':
-      WebDAV.runSync(msg.mode || 'sync')
+      if (activeSyncAbort) {
+        sendResponse({ ok: false, error: '已有同步正在进行', code: 'busy' });
+        return false;
+      }
+      activeSyncAbort = new AbortController();
+      WebDAV.runSync(msg.mode || 'sync', { signal: activeSyncAbort.signal })
         .then((res) => sendResponse({ ok: true, result: res }))
-        .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
+        .catch((e) => sendResponse({
+          ok: false,
+          error: e.code === 'cancelled' ? '同步已取消' : e.message,
+          code: e.code
+        }))
+        .finally(() => { activeSyncAbort = null; });
       return true;
+    case 'webdav-cancel':
+      if (activeSyncAbort) {
+        activeSyncAbort.abort();
+        activeSyncAbort = null;
+        sendResponse({ ok: true, result: { cancelled: true } });
+      } else {
+        sendResponse({ ok: true, result: { cancelled: false } });
+      }
+      return false;
     case 'webdav-test':
       WebDAV.testConnection(msg.settings)
         .then((res) => sendResponse({ ok: true, result: res }))
@@ -247,12 +266,14 @@ function notifyUI(payload) {
 
 // ---- 自动同步闹钟 ----
 const AUTO_SYNC_ALARM = 'open-collections-auto-sync';
+let activeSyncAbort = null;
 
 async function rescheduleAutoSync() {
   if (!chrome.alarms) return;
   const settings = await Storage.loadSettings();
   await chrome.alarms.clear(AUTO_SYNC_ALARM);
-  if (settings.webdav && settings.webdav.autoSync && settings.webdav.url && settings.webdav.username) {
+  if (settings.webdav && settings.webdav.enabled && settings.webdav.autoSync &&
+    settings.webdav.url && settings.security && settings.security.enabled) {
     const minutes = Math.max(5, Number(settings.webdav.intervalMinutes) || 30);
     chrome.alarms.create(AUTO_SYNC_ALARM, { periodInMinutes: minutes });
   }
@@ -260,9 +281,19 @@ async function rescheduleAutoSync() {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === AUTO_SYNC_ALARM) {
-    WebDAV.runSync('sync').catch((e) => {
-      console.error('[OpenCollections] auto sync failed:', e);
-      notifyUI({ type: 'error', message: '自动同步失败：' + e.message });
-    });
+    Storage.loadSettings().then((settings) => {
+      if (!settings.webdav || settings.webdav.enabled !== true) {
+        chrome.alarms.clear(AUTO_SYNC_ALARM);
+        return;
+      }
+      if (activeSyncAbort) return;
+      activeSyncAbort = new AbortController();
+      WebDAV.runSync('sync', { signal: activeSyncAbort.signal })
+        .catch((e) => {
+          console.error('[OpenCollections] auto sync failed:', e);
+          notifyUI({ type: 'error', message: '自动同步失败：' + e.message });
+        })
+        .finally(() => { activeSyncAbort = null; });
+    }).catch(() => {});
   }
 });

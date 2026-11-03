@@ -230,6 +230,17 @@ html, body {
   padding: 14px 16px;
   gap: 10px;
 }
+/* 首次运行隐私提示条 */
+.onboarding-banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  flex: none;
+}
+.onboarding-text { flex: 1; font-size: 12px; line-height: 1.55; color: var(--text-muted); }
+.onboarding-text a { color: var(--primary); }
 .group-head {
   display: flex; flex-direction: column; gap: 4px;
 }
@@ -458,6 +469,10 @@ html, body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 #ai-applied .settings-actions { margin-top: 4px; }
+
+/* 首次启用确认 */
+#consent-text { white-space: pre-line; font-size: 13px; line-height: 1.7; margin: 0 0 10px; }
+#consent-drawer .settings-actions { margin-top: 12px; }
 
 /* 重复链接清理 */
 .dedupe-keep { gap: 14px; }

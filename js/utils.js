@@ -67,6 +67,23 @@
     return Utils.formatTime(ts);
   };
 
+  // 强制 https：保存与发请求前统一校验，拒绝明文 http。
+  Utils.requireHttpsUrl = function (raw, label) {
+    const name = label || '地址';
+    const text = String(raw || '').trim();
+    if (!text) throw new Error('请填写' + name);
+    let url;
+    try {
+      url = new URL(text);
+    } catch (e) {
+      throw new Error(name + '格式不正确');
+    }
+    if (url.protocol !== 'https:') {
+      throw new Error(name + '必须使用 https://（已拒绝明文 http，避免凭据与内容在传输中被窃听）');
+    }
+    return url;
+  };
+
   // 从 URL 提取域名。
   Utils.hostname = function (url) {
     try {

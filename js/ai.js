@@ -25,18 +25,15 @@
     return err;
   }
 
-  // 支持 Base URL 或完整 /chat/completions 地址。
+  // 支持 Base URL 或完整 /chat/completions 地址；仅允许 https。
   function normalizeEndpoint(input) {
     const raw = String(input || '').trim();
     if (!raw) throw makeErr('请填写 AI 接口地址', 'config');
     let url;
     try {
-      url = new URL(raw);
+      url = Utils.requireHttpsUrl(raw, 'AI 接口地址');
     } catch (e) {
-      throw makeErr('AI 接口地址格式不正确', 'config');
-    }
-    if (!/^https?:$/i.test(url.protocol)) {
-      throw makeErr('AI 接口地址必须是 http 或 https', 'config');
+      throw makeErr(e.message, 'config');
     }
     let path = url.pathname.replace(/\/+$/, '');
     if (/\/models$/i.test(path)) path = path.slice(0, -7).replace(/\/+$/, '');
@@ -328,6 +325,10 @@
 
   AI.MAX_CARDS = MAX_CARDS;
   AI.DEFAULT_CATEGORIES = DEFAULT_CATEGORIES.slice();
+  AI.TITLE_MAX = TITLE_MAX;
+  AI.NOTES_MAX = NOTES_MAX;
+  AI.EXCERPT_MAX = EXCERPT_MAX;
+  AI.MAX_GROUPS = MAX_GROUPS;
   AI.normalizeEndpoint = normalizeEndpoint;
   AI.fingerprint = contentFingerprint;
   AI.categoryVersion = function (categories) {

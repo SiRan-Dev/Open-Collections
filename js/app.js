@@ -27,6 +27,9 @@
     aiHasKey: false,
     webdavHasCredentials: false,
     legacyPlaintextSecrets: false,
+    aiEnabled: false,
+    webdavEnabled: false,
+    pendingConsent: null,
     dragCard: null,
     cardDropId: null,
     groupDropId: null
@@ -78,6 +81,8 @@
     els.editor = $('card-editor');
     els.aiDrawer = $('ai-drawer');
     els.dedupeDrawer = $('dedupe-drawer');
+    els.onboardingBanner = $('onboarding-banner');
+    els.btnOnboardingClose = $('btn-onboarding-close');
   }
 
   // ---- 通知 ----
@@ -1161,8 +1166,11 @@
     state.batchCollectDaily = !!b.batchCollectDaily;
     state.aiIncludeInbox = !!b.aiIncludeInbox;
     state.allowDuplicateLinks = !!b.allowDuplicateLinks;
+    state.aiEnabled = !!a.enabled;
+    state.webdavEnabled = !!w.enabled;
     updateSecretPresence();
     updateSecurityUI();
+    updateNetworkControls();
     scheduleAutoLock();
     refreshAiCacheInfo().catch(() => {});
   }
@@ -1235,6 +1243,56 @@
     if (auto) auto.value = String(Number(sec.autoLockMinutes) || 0);
   }
 
+  function updateNetworkControls() {
+    const aiOn = !!state.aiEnabled;
+    const wdOn = !!state.webdavEnabled;
+    const aiCb = $('ai-enabled');
+    const wdCb = $('wd-enabled');
+    if (aiCb) aiCb.checked = aiOn;
+    if (wdCb) wdCb.checked = wdOn;
+    const aiTest = $('btn-ai-test');
+    if (aiTest) aiTest.disabled = !aiOn;
+    ['btn-wd-test', 'btn-wd-sync', 'btn-wd-upload', 'btn-wd-download'].forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = !wdOn;
+    });
+  }
+
+  function openConsent(kind) {
+    state.pendingConsent = kind;
+    if (kind === 'ai') {
+      $('consent-title').textContent = '启用 AI 自动整理';
+      $('consent-text').textContent =
+        `启用后，只有你点击「AI 整理」或「测试连接」时才会联网。\n` +
+        `发送目标：你在设置中填写的 https 接口地址。\n` +
+        `发送内容：当前整理范围的分组/集锦名称、卡片标题（最多 ${AI.TITLE_MAX} 字）、域名、` +
+        `笔记（最多 ${AI.NOTES_MAX} 字）、摘录片段（最多 ${AI.EXCERPT_MAX} 字），以及用于认证的 API Key。\n` +
+        '开发者不会收到这些数据；你可以随时关闭此开关。';
+    } else {
+      $('consent-title').textContent = '启用 WebDAV 云同步';
+      $('consent-text').textContent =
+        '启用后，只有你点击「测试连接」「立即同步」「仅上传」「仅下载」，或开启「定时自动同步」时才会联网。\n' +
+        '发送目标：你在设置中填写的 https WebDAV 服务器。\n' +
+        '发送内容：全部分组名称与卡片数据（标题、URL、笔记、摘录等，不截断），以及认证凭据。\n' +
+        '开发者不会收到这些数据；关闭后会停止定时任务并取消进行中的同步。';
+    }
+    $('consent-drawer').classList.remove('hidden');
+  }
+
+  function closeConsent() {
+    state.pendingConsent = null;
+    $('consent-drawer').classList.add('hidden');
+    updateNetworkControls();
+  }
+
+  async function confirmConsent() {
+    const kind = state.pendingConsent;
+    state.pendingConsent = null;
+    $('consent-drawer').classList.add('hidden');
+    if (kind === 'ai') await saveAiSettings(true);
+    else if (kind === 'webdav') await saveSettings(true);
+  }
+
   async function focusSecuritySettings(message) {
     if (message) toast(message, 'error');
     openDrawer('settings');
@@ -1275,6 +1333,7 @@
       updateSecretPresence();
       updateSecurityUI();
       scheduleAutoLock();
+      sendMessage({ type: 'webdav-reschedule' }).catch(() => {});
       toast('主密码已设置，已有凭据已加密', 'success');
     } catch (e) {
       toast('设置主密码失败：' + (e.message || e), 'error');
@@ -1308,6 +1367,7 @@
       state.security = raw.security;
       updateSecurityUI();
       scheduleAutoLock();
+      sendMessage({ type: 'webdav-reschedule' }).catch(() => {});
       toast('主密码已更换，凭据已用新密钥重新加密', 'success');
     } catch (e) {
       toast('更换主密码失败：' + (e.message || e), 'error');
@@ -1330,6 +1390,7 @@
       updateSecretPresence();
       updateSecurityUI();
       clearTimeout(autoLockTimer);
+      sendMessage({ type: 'webdav-reschedule' }).catch(() => {});
       toast('主密码已清除，已加密凭据已删除；请设置新主密码后重新填写', 'info');
     } catch (e) {
       toast('清除主密码失败：' + (e.message || e), 'error');
@@ -1352,6 +1413,7 @@
   // AI 与收藏行为各自有独立保存按钮，这里只读 WebDAV，避免误覆盖其他配置段。
   function readSettingsFromForm() {
     const webdav = {
+      enabled: $('wd-enabled').checked,
       url: $('wd-url').value.trim(),
       remoteDir: $('wd-remote-dir').value.trim() || '/open-collections',
       autoSync: $('wd-autosync').checked,
@@ -1415,19 +1477,34 @@
     state.batchCollectDaily = !!(raw.behavior && raw.behavior.batchCollectDaily);
     state.aiIncludeInbox = !!(raw.behavior && raw.behavior.aiIncludeInbox);
     state.allowDuplicateLinks = !!(raw.behavior && raw.behavior.allowDuplicateLinks);
+    state.aiEnabled = !!(raw.ai && raw.ai.enabled);
+    state.webdavEnabled = !!(raw.webdav && raw.webdav.enabled);
     updateSecretPresence();
     updateSecurityUI();
+    updateNetworkControls();
     scheduleAutoLock();
     if (opts.reschedule !== false) await sendMessage({ type: 'webdav-reschedule' });
   }
 
-  async function saveSettings() {
+  async function saveSettings(force) {
+    const wantEnabled = $('wd-enabled').checked;
+    if (wantEnabled && !state.webdavEnabled && !force) {
+      openConsent('webdav');
+      return;
+    }
+    const wasEnabled = state.webdavEnabled;
     try {
       await persistSettings(readSettingsFromForm());
       $('wd-username').value = '';
       $('wd-password').value = '';
-      setWDStatus('设置已保存' + (wdSettings.webdav.autoSync ? '，自动同步已启用' : ''), 'success');
+      if (wasEnabled && !state.webdavEnabled) {
+        await sendMessage({ type: 'webdav-cancel' }).catch(() => {});
+        setWDStatus('WebDAV 已关闭：定时任务已停止，进行中的同步已取消', 'success');
+      } else {
+        setWDStatus('设置已保存' + (wdSettings.webdav.autoSync && state.webdavEnabled ? '，自动同步已启用' : ''), 'success');
+      }
     } catch (e) {
+      updateNetworkControls();
       setWDStatus('保存失败：' + (e.message || e), 'error');
       if (e.code === 'setup-required' || e.code === 'locked') {
         await focusSecuritySettings(e.message);
@@ -1647,6 +1724,7 @@
     let categories = Utils.normalizeCategories($('ai-categories').value.split(/[\n,，、]/));
     if (!categories.length) categories = AI.DEFAULT_CATEGORIES.slice();
     const cfg = {
+      enabled: $('ai-enabled').checked,
       baseUrl: $('ai-base-url').value.trim(),
       model: $('ai-model').value.trim(),
       categories
@@ -1680,23 +1758,31 @@
     }
   }
 
-  async function saveAiSettings() {
+  async function saveAiSettings(force) {
     const cfg = readAiForm();
+    if (cfg.enabled && !state.aiEnabled && !force) {
+      openConsent('ai');
+      return;
+    }
+    const wasEnabled = state.aiEnabled;
     if (cfg.baseUrl) {
       try {
         AI.normalizeEndpoint(cfg.baseUrl);
       } catch (e) {
         setAiStatus(e.message, 'error');
+        updateNetworkControls();
         return;
       }
     }
     if (cfg.apiKey && (!state.security || !state.security.enabled)) {
       setAiStatus('请先设置主密码，API Key 不会以明文保存', 'error');
+      updateNetworkControls();
       await focusSecuritySettings();
       return;
     }
     if (cfg.apiKey && !Secret.isUnlocked()) {
       setAiStatus('主密码已锁定，请先解锁后再保存 API Key', 'error');
+      updateNetworkControls();
       await focusSecuritySettings();
       return;
     }
@@ -1706,10 +1792,16 @@
       $('ai-categories').value = wdSettings.ai.categories.join('\n');
       updateSecretPresence();
       updateSecurityUI();
-      setAiStatus(state.aiHasKey
-        ? '设置已保存，API Key 已加密存储'
-        : '设置已保存；使用 AI 前需设置主密码并填写 API Key', 'success');
+      if (wasEnabled && !state.aiEnabled) {
+        closeAiDrawer();
+        setAiStatus('AI 整理已关闭：进行中的请求已取消，后续不会再发起请求', 'success');
+      } else {
+        setAiStatus(state.aiHasKey
+          ? '设置已保存，API Key 已加密存储'
+          : '设置已保存；使用 AI 前需设置主密码并填写 API Key', 'success');
+      }
     } catch (e) {
+      updateNetworkControls();
       setAiStatus('保存失败：' + (e.message || e), 'error');
       if (e.code === 'setup-required' || e.code === 'locked') {
         await focusSecuritySettings();
@@ -1728,6 +1820,11 @@
   }
 
   async function testAiConnection() {
+    if (!state.aiEnabled) {
+      setAiStatus('AI 整理未启用：请先勾选「启用 AI 自动整理」并保存确认', 'error');
+      openSettingsForAi();
+      return;
+    }
     const cfg = readAiForm();
     if (!cfg.baseUrl || !cfg.model) {
       setAiStatus('请先填写接口地址、API Key 与模型名称', 'error');
@@ -1788,6 +1885,11 @@
   }
 
   async function testConnection() {
+    if (!$('wd-enabled').checked) {
+      setWDStatus('WebDAV 同步未启用：请先勾选「启用 WebDAV 云同步」并保存确认', 'error');
+      openDrawer('settings');
+      return;
+    }
     const s = readSettingsFromForm();
     if (!s.webdav.url) {
       setWDStatus('请先填写 WebDAV 服务器地址', 'error');
@@ -1987,6 +2089,11 @@
   }
 
   async function startAiOrganize() {
+    if (!state.aiEnabled) {
+      toast('AI 整理未启用：请先在设置中启用并确认首次说明', 'error');
+      openSettingsForAi();
+      return;
+    }
     const cfg = state.aiConfig;
     if (!cfg || !cfg.baseUrl || !cfg.model) {
       toast('请先在设置中配置 AI 接口与模型', 'error');
@@ -2170,6 +2277,11 @@
   }
 
   async function runSync(mode) {
+    if (!$('wd-enabled').checked) {
+      setWDStatus('WebDAV 同步未启用：请先勾选「启用 WebDAV 云同步」并保存确认', 'error');
+      openDrawer('settings');
+      return;
+    }
     const label = { sync: '同步', upload: '上传', download: '下载' }[mode] || mode;
     const s = readSettingsFromForm();
     if (!s.webdav.url) {
@@ -2299,6 +2411,14 @@
     $('btn-security-change-confirm').addEventListener('click', changeMasterPassword);
     $('btn-security-clear').addEventListener('click', clearMasterPassword);
     $('security-auto-lock').addEventListener('change', updateAutoLockSetting);
+    $('btn-consent-confirm').addEventListener('click', confirmConsent);
+    $('btn-consent-cancel').addEventListener('click', closeConsent);
+    if (els.btnOnboardingClose) {
+      els.btnOnboardingClose.addEventListener('click', () => {
+        els.onboardingBanner.classList.add('hidden');
+        Storage.dismissOnboarding().catch(() => {});
+      });
+    }
     ['mousedown', 'keydown', 'touchstart'].forEach((evt) => {
       document.addEventListener(evt, () => {
         if (Secret.isUnlocked()) scheduleAutoLock();
@@ -2318,7 +2438,7 @@
     });
 
     // AI 自动整理
-    $('btn-ai-save').addEventListener('click', saveAiSettings);
+    $('btn-ai-save').addEventListener('click', () => saveAiSettings());
     $('btn-ai-test').addEventListener('click', testAiConnection);
     $('btn-ai-cache-clear').addEventListener('click', clearAiCache);
     $('btn-ai-abort').addEventListener('click', closeAiDrawer);
@@ -2331,7 +2451,7 @@
     $('btn-ai-done').addEventListener('click', closeAiDrawer);
 
     // WebDAV
-    $('btn-wd-save').addEventListener('click', saveSettings);
+    $('btn-wd-save').addEventListener('click', () => saveSettings());
     $('btn-wd-test').addEventListener('click', testConnection);
     $('btn-wd-sync').addEventListener('click', () => runSync('sync'));
     $('btn-wd-upload').addEventListener('click', () => runSync('upload'));
@@ -2343,6 +2463,7 @@
       el.addEventListener('click', () => {
         if (name === 'ai') closeAiDrawer();
         else if (name === 'dedupe') closeDedupeDrawer();
+        else if (name === 'consent') closeConsent();
         else closeDrawer(name);
       });
     });
@@ -2357,6 +2478,7 @@
         closeDrawer('editor');
         closeAiDrawer();
         closeDedupeDrawer();
+        closeConsent();
       }
     });
 
@@ -2386,9 +2508,12 @@
             state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
             state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
             state.allowDuplicateLinks = !!(s.behavior && s.behavior.allowDuplicateLinks);
+            state.aiEnabled = !!(s.ai && s.ai.enabled);
+            state.webdavEnabled = !!(s.webdav && s.webdav.enabled);
             await Secret.restore(s.security);
             updateSecretPresence();
             updateSecurityUI();
+            updateNetworkControls();
             scheduleAutoLock();
             refreshCollectMenuCopy();
           })
@@ -2411,6 +2536,11 @@
     }
     setGroupsFolded(NARROW_QUERY.matches);
     bindEvents();
+    if (els.onboardingBanner) {
+      Storage.loadOnboarding()
+        .then((dismissed) => els.onboardingBanner.classList.toggle('hidden', dismissed))
+        .catch(() => {});
+    }
     Storage.loadSettings()
       .then(async (s) => {
         captureSecretPresence(s);
@@ -2425,9 +2555,12 @@
         state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
         state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
         state.allowDuplicateLinks = !!(s.behavior && s.behavior.allowDuplicateLinks);
+        state.aiEnabled = !!(s.ai && s.ai.enabled);
+        state.webdavEnabled = !!(s.webdav && s.webdav.enabled);
         await Secret.restore(s.security);
         updateSecretPresence();
         updateSecurityUI();
+        updateNetworkControls();
         scheduleAutoLock();
         refreshCollectMenuCopy();
       })

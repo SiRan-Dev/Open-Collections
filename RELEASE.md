@@ -76,9 +76,10 @@ Open Collections 是一个本地网页收藏夹，用来替代已下线的 Micro
 · 可选 WebDAV 云同步（兼容 Nextcloud 等标准服务）：支持定时自动同步，按条目时间戳合并冲突，删除使用墓碑标记不会误伤新内容
 
 【隐私】
-· 无账号、无分析统计、无广告、无遥测
-· 只有你主动点击「摘录」、启用 WebDAV 或使用 AI 整理时，才会申请网页访问权限或发起网络请求
-· WebDAV 凭据与 AI API Key 只保存在本机，仅发送给你自己填写的服务器或接口
+· 无账号、无分析统计、无广告、无遥测、无远程代码
+· AI 整理与 WebDAV 同步默认关闭；首次启用会展示发送内容与目标，确认后才生效
+· 只有你主动点击「摘录」、启用并确认 WebDAV 或 AI 整理时，才会申请网页访问权限或发起网络请求
+· 端点仅接受 https；WebDAV 凭据与 AI API Key 经主密码加密后只保存在本机，仅发送给你自己填写的服务器或接口
 
 【快捷键】
 Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开/关闭侧边栏
@@ -102,7 +103,7 @@ Open Collections is a local bookmark manager that replaces Microsoft Edge's reti
 • Standalone window (480×720) shares the same data as the side panel.
 • JSON backup with merge/overwrite import, Netscape HTML export, and optional WebDAV sync (Nextcloud compatible) with per-item conflict resolution.
 
-Privacy: no account, no analytics, no ads, no telemetry. Data stays in chrome.storage.local. Web access is requested only when you click "Excerpt", enable WebDAV or use AI organization, and credentials/keys are stored locally and sent only to the server or endpoint you configure.
+Privacy: no account, no analytics, no ads, no telemetry, no remote code. AI organization and WebDAV sync are off by default; the first enablement shows what is sent and where, and only works after confirmation. Web access is requested only when you click "Excerpt" or enable and confirm WebDAV/AI. Endpoints must use https; credentials and keys are encrypted with a master password, stored locally, and sent only to the server or endpoint you configure.
 ```
 
 ### 分类

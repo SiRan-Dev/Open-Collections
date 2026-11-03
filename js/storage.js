@@ -15,6 +15,7 @@
 
   const DEFAULT_SETTINGS = {
     webdav: {
+      enabled: false,
       url: '',
       username: '',
       password: '',
@@ -28,6 +29,7 @@
       allowDuplicateLinks: false
     },
     ai: {
+      enabled: false,
       baseUrl: '',
       apiKey: '',
       model: '',
@@ -841,6 +843,7 @@
     if (!raw || typeof raw !== 'object') return base;
     const webdav = raw.webdav && typeof raw.webdav === 'object' ? raw.webdav : {};
     base.webdav = {
+      enabled: !!webdav.enabled,
       url: typeof webdav.url === 'string' ? webdav.url : '',
       username: typeof webdav.username === 'string' ? webdav.username : '',
       password: typeof webdav.password === 'string' ? webdav.password : '',
@@ -857,6 +860,7 @@
     const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
     const categories = Utils.normalizeCategories(ai.categories);
     base.ai = {
+      enabled: !!ai.enabled,
       baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl : '',
       apiKey: typeof ai.apiKey === 'string' ? ai.apiKey : '',
       model: typeof ai.model === 'string' ? ai.model : '',
@@ -928,6 +932,13 @@
     for (const field of SECRET_FIELDS) {
       const value = readPath(p, field.path);
       if (typeof value === 'string' && value.trim()) inputs[field.name] = value;
+    }
+    // 传输安全：保存时即拒绝 http 地址，避免凭据与内容明文传输。
+    if (p.webdav && typeof p.webdav.url === 'string' && p.webdav.url.trim()) {
+      Utils.requireHttpsUrl(p.webdav.url, 'WebDAV 服务器地址');
+    }
+    if (p.ai && typeof p.ai.baseUrl === 'string' && p.ai.baseUrl.trim()) {
+      Utils.requireHttpsUrl(p.ai.baseUrl, 'AI 接口地址');
     }
     if (Object.keys(inputs).length) {
       if (!current.security.enabled) {
@@ -1091,6 +1102,28 @@
 
   Storage.saveSettings = async function (settings) {
     return Storage.updateSettings(settings);
+  };
+
+  // ---- 首次运行提示（可关闭，不再重复）----
+  const ONBOARDING_KEY = 'openpocket:onboarding';
+  Storage.ONBOARDING_KEY = ONBOARDING_KEY;
+
+  Storage.loadOnboarding = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(ONBOARDING_KEY, (items) => {
+        const raw = items && items[ONBOARDING_KEY];
+        resolve(!!(raw && raw.dismissed));
+      });
+    });
+  };
+
+  Storage.dismissOnboarding = async function () {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [ONBOARDING_KEY]: { dismissed: true, at: Utils.now() } }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
   };
 
   // ---- AI 分类缓存（缓存键 → 分类名），用于节省 token ----

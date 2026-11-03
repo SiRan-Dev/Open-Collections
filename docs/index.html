@@ -96,7 +96,7 @@
     <li><strong>站点图标</strong>：通过浏览器内置的 <code>_favicon</code> 接口读取，不向站点或第三方发起额外请求。</li>
     <li><strong>摘录</strong>：只在你点击「摘录」或按 Ctrl+Shift+E 时，读取当前页面中你选中的文字；不会读取页面其他内容。</li>
     <li><strong>WebDAV 同步</strong>：只在你点击「测试连接」「立即同步」「仅上传」「仅下载」，或你主动开启「定时自动同步」后，向<strong>你自己填写的</strong> WebDAV 服务器发起请求。数据与凭据只会发送到该服务器。</li>
-    <li><strong>AI 整理</strong>：只在你点击「AI 整理」或设置中的「测试连接」时，向<strong>你自己填写的</strong> OpenAI 兼容接口发送当前分组的标题、URL、笔记与摘录片段，以及用于认证的 API Key。开发者不会收到这些数据；请自行确认该接口运营方的隐私与数据处理政策。</li>
+    <li><strong>AI 整理</strong>：只有你在设置中启用 AI 整理并点击「AI 整理」或「测试连接」时，才会向<strong>你自己填写的</strong> OpenAI 兼容接口发送当前整理范围的分组/集锦名称、卡片标题（最多 80 字）、域名、笔记（最多 60 字）与摘录片段（最多 100 字），以及用于认证的 API Key。开发者不会收到这些数据；请自行确认该接口运营方的隐私与数据处理政策。</li>
     <li>除上述情况外，本扩展不发起任何网络请求。</li>
   </ul>
 
@@ -118,53 +118,76 @@
     <li>若启用 WebDAV，云端副本存放于你自己的服务器，由你自行管理与删除。</li>
   </ul>
 
-  <h2>6. 凭据安全</h2>
-  <p>WebDAV 用户名、密码与 AI 接口的 API Key 使用主密码经 PBKDF2-SHA256 派生密钥、AES-GCM 加密后保存在本机浏览器存储中；磁盘不保存明文与派生密钥。解锁状态只存在于内存/浏览器会话存储，关闭浏览器或手动锁定后失效。该措施能降低浏览器存储被离线读取时的泄露风险，但不能防御已入侵本机、能读取扩展内存或注入页面的恶意程序/扩展，也不能替代系统磁盘加密。若担心本机被他人使用，请不要启用同步或 AI 整理，或使用专用的低权限账号 / 应用专用密码。</p>
+  <h2>6. 你的权利与撤回</h2>
+  <ul>
+    <li><strong>导出</strong>：设置页可导出 JSON 与 HTML 书签，导出内容不包含主密码或凭据。</li>
+    <li><strong>删除</strong>：可随时删除分组/卡片，或覆盖导入清空本地数据；卸载扩展会清除本地存储。</li>
+    <li><strong>撤回同意</strong>：AI 整理与 WebDAV 同步默认关闭，只有你首次启用并确认后才生效；关闭开关会立即停止后续请求，WebDAV 还会停止定时任务并取消进行中的同步。</li>
+    <li>本扩展<strong>不会出售、出租</strong>你的数据，也不将其用于广告、画像或与功能无关的用途。</li>
+  </ul>
 
-  <h2>7. 儿童隐私</h2>
+  <h2>7. 凭据安全与传输</h2>
+  <p>WebDAV 服务器地址与 AI 接口地址仅接受 <code>https://</code>，保存时即校验并拒绝明文 http。WebDAV 用户名、密码与 AI 接口的 API Key 使用主密码经 PBKDF2-SHA256 派生密钥、AES-GCM 加密后保存在本机浏览器存储中；磁盘不保存明文与派生密钥。解锁状态只存在于内存/浏览器会话存储，关闭浏览器或手动锁定后失效。该措施能降低浏览器存储被离线读取时的泄露风险，但不能防御已入侵本机、能读取扩展内存或注入页面的恶意程序/扩展，也不能替代系统磁盘加密。若担心本机被他人使用，请不要启用同步或 AI 整理，或使用专用的低权限账号 / 应用专用密码。</p>
+
+  <h2>8. 儿童隐私</h2>
   <p>本扩展不是面向儿童的产品，也不会有意处理儿童的个人信息。</p>
 
-  <h2>8. 政策变更</h2>
-  <p>如本政策发生变化，会更新本页面顶部的日期。</p>
+  <h2>9. 政策变更</h2>
+  <p>如本政策发生变化，会更新本页面顶部的日期；重大变更会在扩展设置页或商店更新说明中提示。</p>
 
-  <h2>9. 联系方式</h2>
+  <h2>10. 联系方式</h2>
   <p>如有疑问，请联系：<a href="mailto:313007674+SiRan-Dev@users.noreply.github.com">313007674+SiRan-Dev@users.noreply.github.com</a></p>
+
+  <h2>11. 商店隐私政策 URL</h2>
+  <p>Edge Add-ons 商店后台应填写本页面的公开地址：<code>https://siran-dev.github.io/Open-Collections/</code>。发布前请确认该地址可公开访问；若更换发布地址，请同步更新商店后台与扩展内的隐私政策链接。</p>
 
   <hr />
 
   <p class="lang">English</p>
   <h2>Privacy Policy</h2>
-  <p>Open Collections (the "Extension") is a local web-page collection tool. This policy explains what information the Extension processes, where it is stored, and with whom it is shared.</p>
+  <p>Open Collections (the "Extension") is a local web-page collection tool. This policy explains what information the Extension processes, where it is stored, and with whom it is shared. Last updated: 2026-11-03.</p>
 
-  <h3>What we do not collect</h3>
-  <p>The Extension has no accounts, analytics, advertising SDKs, telemetry, or remote code. The developer receives none of your data, and it is never sold or shared with third parties. Only the WebDAV server or AI endpoint you configure will receive data you explicitly send.</p>
+  <h3>1. No developer collection or sale</h3>
+  <p>The Extension has no accounts, analytics, advertising SDKs, telemetry, or remote code. The developer receives none of your data and never sells, rents, or shares it for advertising, profiling, or unrelated purposes. Only the WebDAV server or AI endpoint you explicitly configure receives data you choose to send.</p>
 
-  <h3>Information processed locally</h3>
-  <p>Only when you take an action, the Extension processes the following, stored entirely in your browser's local storage (<code>chrome.storage.local</code>): titles, URLs, site icons and timestamps of pages you save; selected text of excerpts and their source title/URL; notes you write; group names and colors; settings including the WebDAV server address, username and password if you enable sync, and the AI endpoint, API key, model name and category list if you enable AI organization; and a local AI classification cache (content hashes and category results) used to avoid repeated API calls.</p>
+  <h3>2. Information processed and stored locally</h3>
+  <p>Only when you take an action, the Extension processes the following, stored entirely in your browser's local storage (<code>chrome.storage.local</code>): titles, URLs, site icons and timestamps of pages you save; selected text of excerpts and their source title/URL; notes you write; group names and colors; settings including https WebDAV/AI endpoint addresses, model name, category list, and WebDAV username/password and AI API key encrypted with a master password; and a local AI classification cache (content hashes and category results) used to avoid repeated API calls.</p>
 
-  <h3>Network access</h3>
+  <h3>3. Network access</h3>
   <ul>
     <li><strong>Site icons</strong> are read through the browser's built-in <code>_favicon</code> interface; no extra requests are made.</li>
     <li><strong>Excerpts</strong> read the text you selected on the current page only when you click "Excerpt" or press Ctrl+Shift+E.</li>
-    <li><strong>WebDAV sync</strong> contacts only the server you configure, and only when you click test/sync/upload/download or enable scheduled sync.</li>
-    <li><strong>AI organization</strong> contacts only the OpenAI-compatible endpoint you configure, and only when you click "AI Organize" or "Test connection". It sends the current group's titles, URLs, notes and excerpt snippets, plus the API key used for authentication. The developer receives none of this data; check the privacy practices of your AI provider.</li>
-    <li>No other network requests are made.</li>
+    <li><strong>WebDAV sync</strong> is disabled by default. After you enable it and confirm the first-use notice, it contacts only the https server you configure, and only when you click test/sync/upload/download or enable scheduled sync. Disabling it stops scheduled jobs and cancels an in-progress sync.</li>
+    <li><strong>AI organization</strong> is disabled by default. After you enable it and confirm the first-use notice, it contacts only the https OpenAI-compatible endpoint you configure, and only when you click "AI Organize" or "Test connection". It sends the current group names, card titles (up to 80 characters), domains, notes (up to 60 characters), excerpt snippets (up to 100 characters), and the API key used for authentication. The developer receives none of this data; check the privacy practices of your AI provider.</li>
+    <li>No other network requests are made. Plain http endpoints are rejected when saving and when making requests.</li>
   </ul>
 
-  <h3>Permissions</h3>
-  <p><code>storage</code> to save data; <code>sidePanel</code> for the sidebar UI; <code>tabs</code> to read tab titles/URLs for saving and batch-collecting; <code>activeTab</code>/<code>scripting</code> to read your selection on demand; <code>favicon</code> for site icons; <code>alarms</code> for scheduled sync; optional host permission (<code>&lt;all_urls&gt;</code>) is not granted by default and is requested only when you use excerpts, WebDAV or AI.</p>
+  <h3>4. Permissions</h3>
+  <p><code>storage</code> to save data and session unlock state; <code>sidePanel</code> for the sidebar UI; <code>tabs</code> to read tab titles/URLs for saving and batch-collecting; <code>activeTab</code>/<code>scripting</code> to read your selection on demand; <code>favicon</code> for site icons; <code>alarms</code> for scheduled sync only when you enable it. The optional host permission (<code>&lt;all_urls&gt;</code>) is not granted by default and is requested only when you use excerpts, WebDAV, or AI.</p>
 
-  <h3>Retention and deletion</h3>
-  <p>Data stays in local browser storage and is removed when the Extension is uninstalled. You can delete groups or cards at any time, or replace all data via overwrite import. Cloud copies, if any, live on your own WebDAV server and are managed by you.</p>
+  <h3>5. Retention, export, deletion, and withdrawal</h3>
+  <ul>
+    <li>Data stays in local browser storage and is removed when the Extension is uninstalled.</li>
+    <li>You can delete groups or cards at any time, or replace all data via overwrite import.</li>
+    <li>You can export JSON or HTML bookmarks from the settings page; exports do not include the master password or credentials.</li>
+    <li>Cloud copies, if any, live on your own WebDAV server and are managed by you.</li>
+    <li>AI and WebDAV are opt-in and can be disabled at any time. Disabling stops new requests; disabling WebDAV also stops scheduled jobs and cancels an in-progress sync.</li>
+  </ul>
 
-  <h3>Credentials</h3>
-  <p>WebDAV credentials and the AI API key are stored in plain text in local browser storage; browser extensions cannot provide stronger key protection. Use a dedicated low-privilege account or app-specific password if needed.</p>
+  <h3>6. Credentials and transport security</h3>
+  <p>WebDAV and AI endpoint addresses must use <code>https://</code>; plain http is rejected. WebDAV username/password and the AI API key are encrypted with a key derived from your master password using PBKDF2-SHA256 and AES-GCM, and stored locally. Plaintext credentials and derived keys are never written to disk; unlock state exists only in memory/session storage and expires when the browser closes or when you lock manually. This reduces the risk of offline reads of browser storage, but it cannot protect against malware, malicious extensions, or an attacker who can read the Extension's memory, and it does not replace full-disk encryption. Do not save credentials on a device you do not trust.</p>
 
-  <h3>Children</h3>
+  <h3>7. Children</h3>
   <p>The Extension is not directed to children and does not intentionally process children's personal information.</p>
 
-  <h3>Contact</h3>
+  <h3>8. Changes</h3>
+  <p>If this policy changes, the date at the top of this page will be updated; material changes will be noted in the Extension or the store update notes.</p>
+
+  <h3>9. Contact</h3>
   <p><a href="mailto:313007674+SiRan-Dev@users.noreply.github.com">313007674+SiRan-Dev@users.noreply.github.com</a></p>
+
+  <h3>10. Store privacy policy URL</h3>
+  <p>Use this page's public URL in the Edge Add-ons store listing: <code>https://siran-dev.github.io/Open-Collections/</code>. Verify it is publicly accessible before submission and update both the store listing and in-extension privacy link if the URL changes.</p>
 
   <footer>Open Collections · GPL-3.0 · <a href="https://github.com/SiRan-Dev/Open-Collections">源代码</a></footer>
 </main>
