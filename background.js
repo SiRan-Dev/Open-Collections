@@ -144,10 +144,13 @@ if (chrome.windows && chrome.windows.onFocusChanged) {
   });
 }
 
-// 活动标签是普通网页时直接用；扩展自身页面（独立窗口）才回退到最近活跃网页标签。
-// 用户主动停留在受限页时返回该页，由 addCurrentPage / saveSelection 给出明确错误，
-// 避免静默收藏/摘录到另一个网页。
-async function getActiveWebTab() {
+// 活动标签是普通网页时直接用；只有明确允许时才回退到最近活跃网页标签。
+// 侧边栏（非 standalone 管理窗口）不得回退：受限页或面板自身页面被当成活动页时，
+// 回退会把窗口里的另一个网页静默顶替成收藏目标，用户看到的却是「添加当前页」。
+// 独立管理窗口（sender.url 带 ?standalone=1）仍保留原回退行为。
+async function getActiveWebTab(options) {
+  options = options || {};
+  const allowRecentFallback = options.allowRecentFallback !== false;
   let tab = null;
   try {
     const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -156,6 +159,10 @@ async function getActiveWebTab() {
   if (tab) {
     if (isWebTabUrl(tab.url)) return tab;
     if (!isOwnManagementPage(tab.url)) return tab;
+    // 扩展自身页面：仅独立管理窗口允许回退；侧边栏直接把该页交给调用方明确报错。
+    if (!allowRecentFallback) return tab;
+  } else if (!allowRecentFallback) {
+    return null;
   }
   const recent = await readRecentWebTab();
   if (recent && typeof recent.id === 'number') {
@@ -165,6 +172,18 @@ async function getActiveWebTab() {
     } catch (e) {}
   }
   return null;
+}
+
+// 消息发送方是否为独立管理窗口（management.html?standalone=1）。
+// 侧边栏加载的是不带 standalone 的 management.html，不能启用「最近网页」回退。
+function isStandaloneSender(sender) {
+  const url = sender && sender.url ? String(sender.url) : '';
+  return /[?&]standalone=1(?:&|$)/.test(url);
+}
+
+// 不可收藏的受限页 scheme：浏览器内部页、扩展自身页面、本地文件等。
+function isRestrictedPageUrl(url) {
+  return /^(chrome|edge|about|chrome-extension|file|devtools|view-source):/i.test(String(url || ''));
 }
 
 // ---- 工具：获取活动标签页信息（保留原行为供内部兼容调用）----
@@ -186,11 +205,13 @@ function faviconUrlFor(url) {
 // ---- 添加当前页面到当前分组 ----
 async function addCurrentPage(options) {
   options = options || {};
-  const tab = await getActiveWebTab();
-  if (!tab || !tab.url) throw new Error('请先在浏览器中打开一个网页再添加');
-  // 忽略扩展自身与浏览器内部页。
-  if (/^(chrome|edge|about|chrome-extension):/i.test(tab.url)) {
-    throw new Error('无法保存浏览器内部页面');
+  const tab = await getActiveWebTab({ allowRecentFallback: options.allowRecentFallback });
+  if (!tab || !tab.url) {
+    throw new Error('当前页面不支持收藏，请先在浏览器中打开一个网页（切换到要收藏的网页）后再试');
+  }
+  // 浏览器内部页、扩展自身页面与本地文件一律不收藏，也绝不替换成其他网页。
+  if (isRestrictedPageUrl(tab.url)) {
+    throw new Error('当前页面（新标签页或浏览器内部页面）不支持收藏，请切换到普通网页后再试');
   }
   const groupId = await Storage.getActiveGroupId();
   if (!groupId) throw new Error('请先创建一个分组');
@@ -222,7 +243,7 @@ async function addCurrentPage(options) {
 // ---- 保存选中文字为摘录卡片 ----
 async function saveSelection(options) {
   options = options || {};
-  const tab = await getActiveWebTab();
+  const tab = await getActiveWebTab({ allowRecentFallback: options.allowRecentFallback });
   if (!tab || !tab.id) throw new Error('请先在浏览器中打开一个网页再保存摘录');
   if (!/^https?:/i.test(tab.url)) throw new Error('只能在普通网页中保存选区');
 
@@ -419,7 +440,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg.type) {
     case 'add-current-page':
-      addCurrentPage({ force: !!msg.force })
+      addCurrentPage({ force: !!msg.force, allowRecentFallback: isStandaloneSender(sender) })
         .then(() => sendResponse({ ok: true, result: { message: '已加入当前分组' } }))
         .catch((e) => sendResponse({
           ok: false,
@@ -429,7 +450,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }));
       return true;
     case 'save-selection':
-      saveSelection({ force: !!msg.force })
+      saveSelection({ force: !!msg.force, allowRecentFallback: isStandaloneSender(sender) })
         .then((len) => sendResponse({ ok: true, result: { message: `摘录已保存（${len} 字）` } }))
         .catch((e) => sendResponse({
           ok: false,
