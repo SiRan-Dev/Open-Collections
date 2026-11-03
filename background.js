@@ -188,14 +188,113 @@ async function openSidePanel(tab) {
   }
 }
 
-function openManagementWindow() {
-  chrome.windows.create({
-    url: chrome.runtime.getURL(MANAGEMENT_PAGE),
-    type: 'popup',
-    width: 480,
-    height: 720
-  });
+// ---- 独立管理窗口：尺寸策略只在这一处，所有入口（命令/消息/图标降级）共用 ----
+// 默认 1100×800；上限为屏幕可用区域的 90%（Service Worker 无 screen 对象，
+// 由 management 页面上报），极小屏时 90% 优先于最小尺寸，保证窗口完整落在屏幕内。
+// 用户手动调整后的尺寸经防抖持久化，下次沿用；脏数据（非数字/越界）回退默认。
+// Chromium 的 windows.create 不支持窗口级 minWidth，900px 下限用于尺寸校验；
+// 更窄的窗口靠响应式布局降级（分组栏收窄/折叠），不出现横向滚动。
+const MANAGEMENT_WINDOW_DEFAULT = { width: 1100, height: 800 };
+const MANAGEMENT_WINDOW_MIN = { width: 900, height: 600 };
+const MANAGEMENT_WINDOW_MAX = { width: 4000, height: 2400 };
+const BOUNDS_SAVE_DEBOUNCE_MS = 600;
+
+function normalizeWindowSize(width, height) {
+  const w = Number(width);
+  const h = Number(height);
+  return {
+    width: Number.isFinite(w) && w >= MANAGEMENT_WINDOW_MIN.width && w <= MANAGEMENT_WINDOW_MAX.width
+      ? Math.round(w)
+      : MANAGEMENT_WINDOW_DEFAULT.width,
+    height: Number.isFinite(h) && h >= MANAGEMENT_WINDOW_MIN.height && h <= MANAGEMENT_WINDOW_MAX.height
+      ? Math.round(h)
+      : MANAGEMENT_WINDOW_DEFAULT.height
+  };
 }
+
+function fitSizeToScreen(size, screenInfo) {
+  if (!screenInfo || !(Number(screenInfo.w) > 0) || !(Number(screenInfo.h) > 0)) return size;
+  const capW = Math.floor(Number(screenInfo.w) * 0.9);
+  const capH = Math.floor(Number(screenInfo.h) * 0.9);
+  let width = Math.min(size.width, capW);
+  let height = Math.min(size.height, capH);
+  // 极小屏：90% 可用区域优先于最小尺寸，宁可窄于 900 也不超出屏幕。
+  width = Math.max(width, Math.min(MANAGEMENT_WINDOW_MIN.width, capW));
+  height = Math.max(height, Math.min(MANAGEMENT_WINDOW_MIN.height, capH));
+  return { width, height };
+}
+
+async function managementWindowSize() {
+  let size = Object.assign({}, MANAGEMENT_WINDOW_DEFAULT);
+  try {
+    const bounds = await Storage.loadWindowBounds();
+    if (bounds) {
+      const normalized = normalizeWindowSize(bounds.width, bounds.height);
+      // 仅当存储值通过校验（未触发回退）时才采用，脏数据走默认值。
+      if (bounds.width != null && normalized.width === Math.round(Number(bounds.width))) {
+        size.width = normalized.width;
+      }
+      if (bounds.height != null && normalized.height === Math.round(Number(bounds.height))) {
+        size.height = normalized.height;
+      }
+    }
+  } catch (e) {}
+  try {
+    const screenInfo = await Storage.loadScreenInfo();
+    size = fitSizeToScreen(size, screenInfo);
+  } catch (e) {}
+  return size;
+}
+
+async function openManagementWindow() {
+  const size = await managementWindowSize();
+  let win = null;
+  try {
+    win = await chrome.windows.create({
+      url: chrome.runtime.getURL(MANAGEMENT_PAGE),
+      type: 'popup',
+      width: size.width,
+      height: size.height
+      // 不传 left/top：Chromium 默认将窗口居中。
+    });
+  } catch (e) {
+    console.error('[OpenCollections] create management window failed:', e);
+    return;
+  }
+  if (win && win.id != null) {
+    await Storage.saveWindowBounds({
+      windowId: win.id,
+      width: size.width,
+      height: size.height
+    }).catch(() => {});
+  }
+}
+
+// 用户手动调整管理窗口大小后记住新尺寸（防抖）；只认我们创建的窗口 id。
+let boundsSaveTimer = null;
+chrome.windows.onBoundsChanged.addListener((win) => {
+  if (!win || win.id == null) return;
+  Storage.loadWindowBounds().then((bounds) => {
+    if (!bounds || bounds.windowId !== win.id) return;
+    clearTimeout(boundsSaveTimer);
+    boundsSaveTimer = setTimeout(() => {
+      Storage.saveWindowBounds({
+        windowId: win.id,
+        width: win.width,
+        height: win.height
+      }).catch(() => {});
+    }, BOUNDS_SAVE_DEBOUNCE_MS);
+  }).catch(() => {});
+});
+
+// 窗口关闭后清除 windowId，保留尺寸供下次打开沿用。
+chrome.windows.onRemoved.addListener((windowId) => {
+  Storage.loadWindowBounds().then((bounds) => {
+    if (bounds && bounds.windowId === windowId) {
+      return Storage.saveWindowBounds({ windowId: null });
+    }
+  }).catch(() => {});
+});
 
 // ---- 快捷键 ----
 // 命令 → 处理器映射（与 manifest commands 一一对应，不得共用入口）：

@@ -2666,6 +2666,17 @@
   }
 
   // ---- 启动 ----
+  // 上报屏幕可用区域：Service Worker 没有 screen 对象，独立窗口尺寸用它做上限与居中。
+  function reportScreenInfo() {
+    try {
+      if (typeof screen === 'undefined' || !Storage.saveScreenInfo) return;
+      Storage.saveScreenInfo({
+        w: Number(screen.availWidth) || 0,
+        h: Number(screen.availHeight) || 0
+      }).catch(() => {});
+    } catch (e) {}
+  }
+
   function init() {
     cacheEls();
     // 关于页版本号取自 manifest，避免发版时多处手改漏更新。
@@ -2676,6 +2687,8 @@
     }
     setGroupsFolded(NARROW_QUERY.matches);
     bindEvents();
+    reportScreenInfo();
+    window.addEventListener('resize', Utils.debounce(reportScreenInfo, 300));
     if (els.onboardingBanner) {
       Storage.loadOnboarding()
         .then((dismissed) => els.onboardingBanner.classList.toggle('hidden', dismissed))

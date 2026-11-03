@@ -1126,6 +1126,52 @@
     });
   };
 
+  // ---- 独立窗口尺寸记忆与屏幕可用区域 ----
+  const WINDOW_BOUNDS_KEY = 'openpocket:window-bounds';
+  const SCREEN_INFO_KEY = 'openpocket:screen';
+  Storage.WINDOW_BOUNDS_KEY = WINDOW_BOUNDS_KEY;
+  Storage.SCREEN_INFO_KEY = SCREEN_INFO_KEY;
+
+  Storage.loadWindowBounds = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(WINDOW_BOUNDS_KEY, (items) => {
+        const raw = items && items[WINDOW_BOUNDS_KEY];
+        resolve(raw && typeof raw === 'object' ? raw : null);
+      });
+    });
+  };
+
+  // patch 合并写入，保留未提供字段（windowId 与历史尺寸互不覆盖）。
+  Storage.saveWindowBounds = async function (patch) {
+    const current = await Storage.loadWindowBounds();
+    const next = Object.assign({}, current, patch);
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [WINDOW_BOUNDS_KEY]: next }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(next);
+      });
+    });
+  };
+
+  // Service Worker 没有 screen 对象，由 management 页面上报可用区域。
+  Storage.loadScreenInfo = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(SCREEN_INFO_KEY, (items) => {
+        const raw = items && items[SCREEN_INFO_KEY];
+        resolve(raw && typeof raw === 'object' ? raw : null);
+      });
+    });
+  };
+
+  Storage.saveScreenInfo = async function (info) {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [SCREEN_INFO_KEY]: info }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+  };
+
   // ---- AI 分类缓存（缓存键 → 分类名），用于节省 token ----
   Storage.AI_CACHE_KEY = AI_CACHE_KEY;
 

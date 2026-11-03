@@ -595,6 +595,11 @@ textarea.text-input { resize: vertical; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
+/* 独立窗口窄于 ~900px 时收窄分组栏，保证主区可用且无横向滚动 */
+@media (max-width: 900px) {
+  :root { --sidebar-w: 148px; }
+}
+
 /* 窄屏（侧边栏 / 小窗口）适配：分组栏收窄为浮层，避免挤压主内容 */
 @media (max-width: 520px) {
   .topbar { padding: 8px 10px; gap: 6px; }
