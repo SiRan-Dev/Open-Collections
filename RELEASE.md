@@ -1,21 +1,21 @@
 # 发布与上架（Microsoft Edge Add-ons）
 
-本文是 Open Collections 1.1.0 的发布说明与商店提交材料。商店文案、隐私政策可直接复制粘贴。
+本文是 Open Collections 1.1.1 的发布说明与商店提交材料。商店文案、隐私政策可直接复制粘贴。
 
 ## 发布物
 
 | 项目 | 位置 | 说明 |
 | --- | --- | --- |
-| 扩展包 | `dist/open-collections-1.1.0.zip` | 上传到 Partner Center 的文件 |
+| 扩展包 | `dist/open-collections-1.1.1.zip` | 上传到 Partner Center 的文件 |
 | 商店截图 | `store-assets/01-main.png`、`02-batch.png`、`03-sync.png` | 1280×800，PNG |
-| 版本号 | `manifest.json` → `version: "1.1.0"` | 「关于」页自动读取，无需另改 |
+| 版本号 | `manifest.json` → `version: "1.1.1"` | 「关于」页自动读取，无需另改 |
 | 图标 | `icons/icon16|32|48|128.png` | 由 `node icons/make-icons.js` 生成 |
 
 ## 一、提交前自检
 
 已完成的机器校验：
 
-- `manifest.json` 可解析，MV3 字段齐全，`version` 为 `1.1.0`
+- `manifest.json` 可解析，MV3 字段齐全，`version` 为 `1.1.1`
 - 图标 128×128 / 48×48 / 32×32 / 16×16 均为有效 PNG
 - 全部 JS 通过 `node --check`；包内无远程代码、无 `eval`
 - 包内不含开发文件（`.tmp/`、`store-assets/`、`RELEASE.md`、`PROGRESS.md`、`icons/make-icons.js`）
@@ -227,7 +227,7 @@ WebDAV 用户名、密码与 AI 接口的 API Key 使用本机自动生成的随
 ## 五、上架步骤
 
 1. 用 Microsoft 账号登录 [Partner Center](https://partner.microsoft.com/dashboard/microsoftedge/overview)，加入 **Microsoft Edge 扩展计划**（免费）。
-2. **新建扩展** → 填写扩展名称 → 上传 `dist/open-collections-1.1.0.zip`。
+2. **新建扩展** → 填写扩展名称 → 上传 `dist/open-collections-1.1.1.zip`。
 3. **属性**：选择分类「效率」，勾选支持的平台与语言。
 4. **隐私**：当被问到是否访问、收集或传输个人信息时选择 **是**（本扩展会处理标签页标题、网址与你保存的摘录等），并填入隐私政策 URL。
 5. **商店列表**（中文）：粘贴上面的名称、简短描述、详细描述，上传 3 张 1280×800 截图，填写搜索词与隐私政策 URL。
