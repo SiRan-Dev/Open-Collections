@@ -710,14 +710,19 @@
     const allowDup = !!(settings.behavior && settings.behavior.allowDuplicateLinks);
     const data = await Storage.load();
     const inputs = [];
+    const seenKeys = new Set();
     let skippedDup = 0;
     for (const url of urls) {
       let title;
       try { title = new URL(url).hostname; } catch (e) { title = url; }
       const input = { type: 'page', title, url, favicon: faviconUrl(url) };
       if (!allowDup) {
+        // 先与本次拖入的已收集链接比较，避免同一批里的重复链接全部写入。
+        const key = Utils.cardDedupeKey(input);
+        if (seenKeys.has(key)) { skippedDup++; continue; }
         const dup = Storage.findDuplicateCard(data, input);
         if (dup) { skippedDup++; continue; }
+        seenKeys.add(key);
       }
       inputs.push(input);
     }
