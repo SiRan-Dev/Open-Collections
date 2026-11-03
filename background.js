@@ -209,8 +209,7 @@ function selectionMessage(result) {
   return chars ? `摘录已保存（${chars} 字）` : '摘录已保存';
 }
 
-async function saveSelection(options) {
-  options = options || {};
+async function saveSelection() {
   const tab = await getActiveWebTab();
   if (!tab || !tab.id) throw notCollectableError(null);
   if (!Utils.isCollectableUrl(tab.url)) throw notCollectableError(tab.url);
@@ -436,7 +435,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }));
       return true;
     case 'save-selection':
-      saveSelection({ force: !!msg.force })
+      saveSelection()
         .then((res) => sendResponse({
           ok: true,
           result: {

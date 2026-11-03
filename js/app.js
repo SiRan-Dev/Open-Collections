@@ -1384,18 +1384,7 @@
       return;
     }
     try {
-      let res;
-      try {
-        res = await sendMessage({ type: 'save-selection' });
-      } catch (e) {
-        if (e.code !== 'duplicate' || !e.duplicate) throw e;
-        const name = e.duplicate.groupName || '其他分组';
-        if (!confirm(`该摘录已存在于「${name}」。\n仍然保存一条相同摘录？`)) {
-          toast(`已跳过：摘录已存在于「${name}」`, 'info');
-          return;
-        }
-        res = await sendMessage({ type: 'save-selection', force: true });
-      }
+      const res = await sendMessage({ type: 'save-selection' });
       const result = (res && res.result) || {};
       toast(result.message || '摘录已保存', result.truncated ? 'info' : 'success');
       await loadAndRender();
