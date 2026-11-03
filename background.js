@@ -457,20 +457,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: '已有同步正在进行', code: 'busy' });
         return false;
       }
-      activeSyncAbort = new AbortController();
-      WebDAV.runSync(msg.mode || 'sync', { signal: activeSyncAbort.signal })
-        .then((res) => sendResponse({ ok: true, result: res }))
-        .catch((e) => sendResponse({
-          ok: false,
-          error: e.code === 'cancelled' ? '同步已取消' : e.message,
-          code: e.code
-        }))
-        .finally(() => { activeSyncAbort = null; });
+      {
+        const controller = new AbortController();
+        activeSyncAbort = controller;
+        WebDAV.runSync(msg.mode || 'sync', { signal: controller.signal })
+          .then((res) => sendResponse({ ok: true, result: res }))
+          .catch((e) => sendResponse({
+            ok: false,
+            error: e.code === 'cancelled' ? '同步已取消' : e.message,
+            code: e.code
+          }))
+          .finally(() => {
+            // 取消后引用要保留到本次同步真正落定，避免旧同步的 finally 清掉新同步的控制器。
+            if (activeSyncAbort === controller) activeSyncAbort = null;
+          });
+      }
       return true;
     case 'webdav-cancel':
       if (activeSyncAbort) {
+        // 只中止请求，不立即清空；控制器由该次同步的 finally 按身份清理。
         activeSyncAbort.abort();
-        activeSyncAbort = null;
         sendResponse({ ok: true, result: { cancelled: true } });
       } else {
         sendResponse({ ok: true, result: { cancelled: false } });
@@ -520,13 +526,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         return;
       }
       if (activeSyncAbort) return;
-      activeSyncAbort = new AbortController();
-      WebDAV.runSync('sync', { signal: activeSyncAbort.signal })
+      const controller = new AbortController();
+      activeSyncAbort = controller;
+      WebDAV.runSync('sync', { signal: controller.signal })
         .catch((e) => {
           console.error('[OpenCollections] auto sync failed:', e);
           notifyUI({ type: 'error', message: '自动同步失败：' + e.message });
         })
-        .finally(() => { activeSyncAbort = null; });
+        .finally(() => {
+          if (activeSyncAbort === controller) activeSyncAbort = null;
+        });
     }).catch(() => {});
   }
 });
