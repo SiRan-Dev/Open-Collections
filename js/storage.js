@@ -24,7 +24,8 @@
     },
     behavior: {
       batchCollectDaily: false,
-      aiIncludeInbox: false
+      aiIncludeInbox: false,
+      allowDuplicateLinks: false
     },
     ai: {
       baseUrl: '',
@@ -265,6 +266,23 @@
     });
   }
 
+  // 跨分组查找重复条目：网页按规范化 URL，摘录按来源 URL + 选区文本。
+  // 返回 { group, card }；未命中返回 null。
+  Storage.findDuplicateCard = function (data, input, options) {
+    const key = Utils.cardDedupeKey(input);
+    if (!key) return null;
+    const excludeCardId = options && options.excludeCardId;
+    const groups = (data && Array.isArray(data.groups)) ? data.groups : [];
+    for (const g of groups) {
+      if (g.deleted) continue;
+      for (const c of g.cards || []) {
+        if (c.deleted || c.id === excludeCardId) continue;
+        if (Utils.cardDedupeKey(c) === key) return { group: g, card: c };
+      }
+    }
+    return null;
+  };
+
   Storage.addCards = async function (groupId, cardInputs) {
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId && !x.deleted);
@@ -368,8 +386,13 @@
   };
 
   // 应用 AI 整理方案：可来自多个源分组；优先复用规范化同名的已有分组，否则新建；卡片复制后原卡片打墓碑。
+  // 默认按规范化 URL 跳过目标分组中已存在的重复链接；allowDuplicateLinks 为 true 时全部写入。
   Storage.applyOrganizePlan = async function (plan) {
     plan = plan || {};
+    const settings = await Storage.loadSettings();
+    const allowDuplicateLinks = plan.allowDuplicateLinks != null
+      ? !!plan.allowDuplicateLinks
+      : !!(settings.behavior && settings.behavior.allowDuplicateLinks);
     return Storage.mutate((data) => {
       const sourceIds = Array.isArray(plan.sourceGroupIds) && plan.sourceGroupIds.length
         ? plan.sourceGroupIds
@@ -391,6 +414,7 @@
       const reusedGroups = [];
       const updatedSources = new Set();
       let movedCards = 0;
+      let skippedDuplicates = 0;
 
       for (let i = 0; i < specs.length; i++) {
         const spec = specs[i];
@@ -431,8 +455,26 @@
           data.groups.push(target);
         }
 
+        // 目标分组已有的去重键，用于默认关闭「允许重复」时跳过重复链接。
+        const existingKeys = new Set();
+        if (!allowDuplicateLinks) {
+          for (const c of target.cards) {
+            if (c.deleted) continue;
+            const key = Utils.cardDedupeKey(c);
+            if (key) existingKeys.add(key);
+          }
+        }
+
         for (const entry of picked) {
           sourceCards.delete(entry.card.id);
+          if (!allowDuplicateLinks) {
+            const key = Utils.cardDedupeKey(entry.card);
+            if (key && existingKeys.has(key)) {
+              skippedDuplicates++;
+              continue;
+            }
+            if (key) existingKeys.add(key);
+          }
           const copy = Utils.clone(entry.card);
           copy.id = Utils.uuid();
           copy.addedAt = entry.card.addedAt;
@@ -451,7 +493,7 @@
       }
 
       updatedSources.forEach((g) => { g.updatedAt = now; });
-      return { createdGroups, reusedGroups, movedCards };
+      return { createdGroups, reusedGroups, movedCards, skippedDuplicates };
     });
   };
 
@@ -689,7 +731,8 @@
     const behavior = raw.behavior && typeof raw.behavior === 'object' ? raw.behavior : {};
     base.behavior = {
       batchCollectDaily: !!behavior.batchCollectDaily,
-      aiIncludeInbox: !!behavior.aiIncludeInbox
+      aiIncludeInbox: !!behavior.aiIncludeInbox,
+      allowDuplicateLinks: !!behavior.allowDuplicateLinks
     };
     const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
     const categories = Utils.normalizeCategories(ai.categories);

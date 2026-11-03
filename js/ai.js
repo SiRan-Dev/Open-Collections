@@ -191,8 +191,8 @@
   }
 
   function dedupeKey(card) {
-    const url = String(card.url || card.sourceUrl || '').trim().replace(/#.*$/, '');
-    return url || ('id:' + card.id);
+    // 与收藏查重共用同一套规范化规则：网页按 URL，摘录按来源 URL + 选区文本。
+    return Utils.cardDedupeKey(card) || ('id:' + card.id);
   }
 
   function buildSystemPrompt(existingNames, categories) {

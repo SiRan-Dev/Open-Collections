@@ -160,6 +160,13 @@
             </div>
             <p class="hint">关闭时收件箱条目不会参与 AI 自动归类，避免被动搬动；在收件箱视图内主动点击「AI 整理」仍会执行。</p>
           </div>
+          <div class="form-row form-inline">
+            <label class="checkbox-label">
+              <input id="behavior-allow-dup" type="checkbox" />
+              <span>允许重复添加同一链接</span>
+            </label>
+          </div>
+          <p class="hint">关闭时按规范化 URL 跨分组查重（忽略协议、末尾斜杠与 utm_* 等跟踪参数）；命中后会提示所在分组，并可选择仍然添加。同一页面的不同摘录不受影响。</p>
           <p class="hint">开启后，批量收藏按本地日期收进「收件箱 · 每日标签页」，当天多次收藏合并到同一组。单页收藏与摘录仍进当前分组。</p>
           <div class="settings-actions">
             <button id="btn-behavior-save" class="btn btn-primary">保存设置</button>

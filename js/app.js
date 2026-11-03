@@ -16,6 +16,7 @@
     aiInboxSkipped: 0,
     batchCollectDaily: false,
     aiIncludeInbox: false,
+    allowDuplicateLinks: false,
     dragCard: null,
     cardDropId: null,
     groupDropId: null
@@ -835,6 +836,7 @@
         if (resp && resp.ok === false) {
           const err = new Error(resp.error || '操作失败');
           err.code = resp.code;
+          err.duplicate = resp.duplicate;
           return reject(err);
         }
         resolve(resp);
@@ -844,7 +846,18 @@
 
   async function addCurrentPage() {
     try {
-      const res = await sendMessage({ type: 'add-current-page' });
+      let res;
+      try {
+        res = await sendMessage({ type: 'add-current-page' });
+      } catch (e) {
+        if (e.code !== 'duplicate' || !e.duplicate) throw e;
+        const name = e.duplicate.groupName || '其他分组';
+        if (!confirm(`该链接已存在于「${name}」。\n仍然添加到当前分组？`)) {
+          toast(`已跳过：链接已存在于「${name}」`, 'info');
+          return;
+        }
+        res = await sendMessage({ type: 'add-current-page', force: true });
+      }
       toast((res.result && res.result.message) || '已加入当前分组', 'success');
       await loadAndRender();
     } catch (e) {
@@ -908,13 +921,52 @@
       const targets = (win.tabs || []).filter(isCollectibleTab);
       if (!targets.length) throw new Error('当前窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
 
-      const cardInputs = targets.map((tab) => ({
-        type: 'page',
-        title: tab.title || tab.url,
-        url: tab.url,
-        favicon: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(tab.url)}&size=32`
+      let items = targets.map((tab) => ({
+        tab,
+        input: {
+          type: 'page',
+          title: tab.title || tab.url,
+          url: tab.url,
+          favicon: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(tab.url)}&size=32`
+        }
       }));
 
+      // 默认按规范化 URL 跨分组查重；命中时明确提示并让用户选择「仍然添加」或跳过。
+      let skippedDuplicates = 0;
+      if (!state.allowDuplicateLinks) {
+        const data = await Storage.load();
+        const seenKeys = new Set();
+        const duplicateIndexes = new Map();
+        items.forEach((item, index) => {
+          const key = Utils.cardDedupeKey(item.input);
+          if (!key) return;
+          const existing = Storage.findDuplicateCard(data, item.input);
+          const where = existing ? existing.group.name : (seenKeys.has(key) ? '本窗口其他标签页' : '');
+          if (where) duplicateIndexes.set(index, where);
+          seenKeys.add(key);
+        });
+        if (duplicateIndexes.size) {
+          const list = Array.from(duplicateIndexes.entries());
+          const lines = list.slice(0, 5)
+            .map(([index, where]) => `• ${items[index].input.title} → 「${where}」`)
+            .join('\n');
+          const more = list.length > 5 ? `\n…等 ${list.length} 条` : '';
+          const stillAdd = confirm(
+            `检测到 ${list.length} 个重复链接：\n${lines}${more}\n\n` +
+            `确定 = 仍然全部添加；取消 = 跳过重复，只添加其余 ${items.length - list.length} 条`
+          );
+          if (!stillAdd) {
+            skippedDuplicates = list.length;
+            items = items.filter((item, index) => !duplicateIndexes.has(index));
+            if (!items.length) {
+              toast('已跳过全部重复链接，未添加任何标签页', 'info');
+              return;
+            }
+          }
+        }
+      }
+
+      const cardInputs = items.map((item) => item.input);
       let targetGroup;
       let created = false;
       let revived = false;
@@ -931,25 +983,26 @@
       let closed = 0;
       if (closeAfter) {
         // 先开一个新标签页接管窗口（侧边栏跟随窗口而非标签），
-        // 再关闭全部已收藏标签，包括当前页。
+        // 再关闭全部已收藏标签，包括当前页。被跳过的重复标签保持打开。
         await chrome.tabs.create({ active: true });
-        const ids = targets.map((t) => t.id);
+        const ids = items.map((item) => item.tab.id);
         if (ids.length) {
           await chrome.tabs.remove(ids);
           closed = ids.length;
         }
       }
 
+      const skipNote = skippedDuplicates ? `，跳过 ${skippedDuplicates} 个重复链接` : '';
       if (closeAfter) {
-        toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页`, 'success');
+        toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}`, 'success');
       } else if (oneTabMode && created) {
-        toast(`已新建「${targetGroup.name}」并收进 ${targets.length} 个标签页`, 'success');
+        toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
       } else if (oneTabMode && revived) {
-        toast(`已重新启用「${targetGroup.name}」并收进 ${targets.length} 个标签页`, 'success');
+        toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
       } else if (oneTabMode) {
-        toast(`已追加 ${targets.length} 个标签页到「${targetGroup.name}」`, 'success');
+        toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}`, 'success');
       } else {
-        toast(`已将 ${targets.length} 个标签页收进「${targetGroup.name}」`, 'success');
+        toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}`, 'success');
       }
       await loadAndRender();
     } catch (e) {
@@ -978,7 +1031,18 @@
       return;
     }
     try {
-      const res = await sendMessage({ type: 'save-selection' });
+      let res;
+      try {
+        res = await sendMessage({ type: 'save-selection' });
+      } catch (e) {
+        if (e.code !== 'duplicate' || !e.duplicate) throw e;
+        const name = e.duplicate.groupName || '其他分组';
+        if (!confirm(`该摘录已存在于「${name}」。\n仍然保存一条相同摘录？`)) {
+          toast(`已跳过：摘录已存在于「${name}」`, 'info');
+          return;
+        }
+        res = await sendMessage({ type: 'save-selection', force: true });
+      }
       toast((res.result && res.result.message) || '摘录已保存', 'success');
       await loadAndRender();
     } catch (e) {
@@ -1066,6 +1130,7 @@
     $('wd-interval').value = Number(w.intervalMinutes) || 30;
     $('behavior-batch-daily').checked = !!b.batchCollectDaily;
     $('behavior-ai-inbox').checked = !!b.aiIncludeInbox;
+    $('behavior-allow-dup').checked = !!b.allowDuplicateLinks;
     updateAiInboxOptionVisibility();
     $('ai-base-url').value = a.baseUrl || '';
     $('ai-api-key').value = a.apiKey || '';
@@ -1076,6 +1141,7 @@
     state.aiConfig = wdSettings.ai;
     state.batchCollectDaily = !!b.batchCollectDaily;
     state.aiIncludeInbox = !!b.aiIncludeInbox;
+    state.allowDuplicateLinks = !!b.allowDuplicateLinks;
     refreshAiCacheInfo().catch(() => {});
   }
 
@@ -1134,6 +1200,7 @@
     state.aiConfig = wdSettings.ai;
     state.batchCollectDaily = !!(wdSettings.behavior && wdSettings.behavior.batchCollectDaily);
     state.aiIncludeInbox = !!(wdSettings.behavior && wdSettings.behavior.aiIncludeInbox);
+    state.allowDuplicateLinks = !!(wdSettings.behavior && wdSettings.behavior.allowDuplicateLinks);
     if (opts.reschedule !== false) await sendMessage({ type: 'webdav-reschedule' });
   }
 
@@ -1160,7 +1227,8 @@
       await persistSettings({
         behavior: {
           batchCollectDaily: $('behavior-batch-daily').checked,
-          aiIncludeInbox: $('behavior-ai-inbox').checked
+          aiIncludeInbox: $('behavior-ai-inbox').checked,
+          allowDuplicateLinks: $('behavior-allow-dup').checked
         }
       }, { reschedule: false });
       setBehaviorStatus('设置已保存', 'success');
@@ -1565,9 +1633,15 @@
       const res = await Storage.applyOrganizePlan({ sourceGroupIds, groups });
       state.aiBackupKey = backupKey;
       await loadAndRender();
-      $('ai-applied-text').textContent = res.movedCards
-        ? `已新建 ${res.createdGroups.length} 个、并入 ${res.reusedGroups.length} 个已有分组，移动 ${res.movedCards} 条内容。`
-        : '没有可移动的内容，数据可能已变化。';
+      if (res.movedCards || res.skippedDuplicates) {
+        let text = `已新建 ${res.createdGroups.length} 个、并入 ${res.reusedGroups.length} 个已有分组，移动 ${res.movedCards} 条内容。`;
+        if (res.skippedDuplicates) {
+          text += ` 跳过 ${res.skippedDuplicates} 条目标分组已存在的重复链接。`;
+        }
+        $('ai-applied-text').textContent = text;
+      } else {
+        $('ai-applied-text').textContent = '没有可移动的内容，数据可能已变化。';
+      }
       renderAiState('applied');
     } catch (e) {
       toast('应用失败：' + (e.message || e), 'error');
@@ -1750,6 +1824,7 @@
             state.aiConfig = s.ai;
             state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
             state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
+            state.allowDuplicateLinks = !!(s.behavior && s.behavior.allowDuplicateLinks);
             refreshCollectMenuCopy();
           })
           .catch(() => {});
@@ -1776,6 +1851,7 @@
         state.aiConfig = s.ai;
         state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
         state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
+        state.allowDuplicateLinks = !!(s.behavior && s.behavior.allowDuplicateLinks);
         refreshCollectMenuCopy();
       })
       .catch((e) => console.warn('[OpenCollections] load settings failed:', e));

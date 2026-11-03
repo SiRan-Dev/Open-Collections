@@ -76,6 +76,45 @@
     }
   };
 
+  // URL 去重规范化（唯一实现，供收藏、AI 请求与 AI 写入复用）：
+  // 忽略协议、末尾斜杠、片段与常见跟踪参数，保留 host + path + query 的实质部分。
+  const TRACKING_PARAMS = /^(utm_.*|gclid|fbclid|msclkid|yclid|mc_cid|mc_eid|igshid|spm)$/i;
+
+  Utils.normalizeUrl = function (raw) {
+    const input = String(raw || '').trim();
+    if (!input) return '';
+    let u;
+    try {
+      u = new URL(input);
+    } catch (e) {
+      return input.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
+    }
+    if (!/^(http|https):/i.test(u.protocol)) {
+      return input.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
+    }
+    const host = u.host.toLowerCase();
+    const path = u.pathname.replace(/\/+$/, '') || '/';
+    const params = new URLSearchParams(u.search);
+    const keys = Array.from(new Set(Array.from(params.keys())));
+    for (const key of keys) {
+      if (TRACKING_PARAMS.test(key)) params.delete(key);
+    }
+    params.sort();
+    const query = params.toString();
+    return host + path + (query ? '?' + query : '');
+  };
+
+  // 卡片去重键：网页按规范化 URL；摘录按「来源 URL + 选区文本」，同页不同摘录不算重复。
+  Utils.cardDedupeKey = function (card) {
+    if (!card || typeof card !== 'object') return '';
+    const url = Utils.normalizeUrl(card.url || card.sourceUrl);
+    if (card.type === 'excerpt') {
+      const text = String(card.excerpt || '').trim();
+      return url && text ? 'excerpt:' + url + ':' + text : '';
+    }
+    return url ? 'page:' + url : '';
+  };
+
   // 取标题首字母（用于 favicon 兜底）。
   Utils.initial = function (title) {
     const t = (title || '').trim();

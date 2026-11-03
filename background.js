@@ -58,7 +58,8 @@ function faviconUrlFor(url) {
 }
 
 // ---- 添加当前页面到当前分组 ----
-async function addCurrentPage() {
+async function addCurrentPage(options) {
+  options = options || {};
   const tab = await getActiveTab();
   if (!tab || !tab.url) throw new Error('无法获取当前标签页信息');
   // 忽略扩展自身与浏览器内部页。
@@ -67,17 +68,34 @@ async function addCurrentPage() {
   }
   const groupId = await Storage.getActiveGroupId();
   if (!groupId) throw new Error('请先创建一个分组');
-  await Storage.addCard(groupId, {
+  const input = {
     type: 'page',
     title: tab.title || tab.url,
     url: tab.url,
     favicon: faviconUrlFor(tab.url)
-  });
+  };
+
+  if (!options.force) {
+    const settings = await Storage.loadSettings();
+    if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
+      const data = await Storage.load();
+      const dup = Storage.findDuplicateCard(data, input);
+      if (dup) {
+        const err = new Error(`该链接已存在于「${dup.group.name}」`);
+        err.code = 'duplicate';
+        err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+        throw err;
+      }
+    }
+  }
+
+  await Storage.addCard(groupId, input);
   return tab.title || tab.url;
 }
 
 // ---- 保存选中文字为摘录卡片 ----
-async function saveSelection() {
+async function saveSelection(options) {
+  options = options || {};
   const tab = await getActiveTab();
   if (!tab || !tab.id) throw new Error('无法获取当前标签页');
   if (!/^https?:/i.test(tab.url)) throw new Error('只能在普通网页中保存选区');
@@ -104,7 +122,7 @@ async function saveSelection() {
 
   const groupId = await Storage.getActiveGroupId();
   if (!groupId) throw new Error('请先创建一个分组');
-  await Storage.addCard(groupId, {
+  const input = {
     type: 'excerpt',
     title: tab.title || '摘录',
     url: tab.url,
@@ -112,7 +130,23 @@ async function saveSelection() {
     excerpt: selection.slice(0, 5000),
     sourceTitle: tab.title || '',
     sourceUrl: tab.url
-  });
+  };
+
+  if (!options.force) {
+    const settings = await Storage.loadSettings();
+    if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
+      const data = await Storage.load();
+      const dup = Storage.findDuplicateCard(data, input);
+      if (dup) {
+        const err = new Error(`该摘录已存在于「${dup.group.name}」`);
+        err.code = 'duplicate';
+        err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+        throw err;
+      }
+    }
+  }
+
+  await Storage.addCard(groupId, input);
   return selection.length;
 }
 
@@ -162,14 +196,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg.type) {
     case 'add-current-page':
-      addCurrentPage()
+      addCurrentPage({ force: !!msg.force })
         .then(() => sendResponse({ ok: true, result: { message: '已加入当前分组' } }))
-        .catch((e) => sendResponse({ ok: false, error: e.message }));
+        .catch((e) => sendResponse({
+          ok: false,
+          error: e.message,
+          code: e.code,
+          duplicate: e.duplicate
+        }));
       return true;
     case 'save-selection':
-      saveSelection()
+      saveSelection({ force: !!msg.force })
         .then((len) => sendResponse({ ok: true, result: { message: `摘录已保存（${len} 字）` } }))
-        .catch((e) => sendResponse({ ok: false, error: e.message }));
+        .catch((e) => sendResponse({
+          ok: false,
+          error: e.message,
+          code: e.code,
+          duplicate: e.duplicate
+        }));
       return true;
     case 'open-window':
       openManagementWindow();
