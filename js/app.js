@@ -23,6 +23,10 @@
     dedupeKeep: 'oldest',
     dedupeBackupKey: null,
     dedupeRemoved: [],
+    security: null,
+    aiHasKey: false,
+    webdavHasCredentials: false,
+    legacyPlaintextSecrets: false,
     dragCard: null,
     cardDropId: null,
     groupDropId: null
@@ -1125,13 +1129,17 @@
   let wdSettings = null;
 
   async function loadSettingsToForm() {
-    wdSettings = await Storage.loadSettings();
-    const w = wdSettings.webdav || {};
-    const b = wdSettings.behavior || {};
-    const a = wdSettings.ai || {};
+    const raw = await Storage.loadSettings();
+    captureSecretPresence(raw);
+    wdSettings = redactSettings(raw);
+    const w = raw.webdav || {};
+    const b = raw.behavior || {};
+    const a = raw.ai || {};
+    state.security = raw.security;
+    await Secret.restore(raw.security);
     $('wd-url').value = w.url || '';
-    $('wd-username').value = w.username || '';
-    $('wd-password').value = w.password || '';
+    $('wd-username').value = '';
+    $('wd-password').value = '';
     $('wd-remote-dir').value = w.remoteDir || '/open-collections';
     $('wd-autosync').checked = !!w.autoSync;
     $('wd-interval').value = Number(w.intervalMinutes) || 30;
@@ -1140,30 +1148,220 @@
     $('behavior-allow-dup').checked = !!b.allowDuplicateLinks;
     updateAiInboxOptionVisibility();
     $('ai-base-url').value = a.baseUrl || '';
-    $('ai-api-key').value = a.apiKey || '';
+    $('ai-api-key').value = '';
     $('ai-model').value = a.model || '';
     $('ai-categories').value = (a.categories && a.categories.length
       ? a.categories
       : AI.DEFAULT_CATEGORIES).join('\n');
-    state.aiConfig = wdSettings.ai;
+    state.aiConfig = {
+      baseUrl: a.baseUrl || '',
+      model: a.model || '',
+      categories: a.categories && a.categories.length ? a.categories : AI.DEFAULT_CATEGORIES.slice()
+    };
     state.batchCollectDaily = !!b.batchCollectDaily;
     state.aiIncludeInbox = !!b.aiIncludeInbox;
     state.allowDuplicateLinks = !!b.allowDuplicateLinks;
+    updateSecretPresence();
+    updateSecurityUI();
+    scheduleAutoLock();
     refreshAiCacheInfo().catch(() => {});
+  }
+
+  function hasSecretValue(settings, name) {
+    if (!settings) return false;
+    if (settings.secrets && settings.secrets[name]) return true;
+    if (name === 'aiApiKey') return !!settings.ai.apiKey;
+    if (name === 'webdavUsername') return !!settings.webdav.username;
+    if (name === 'webdavPassword') return !!settings.webdav.password;
+    return false;
+  }
+
+  function captureSecretPresence(settings) {
+    state.aiHasKey = hasSecretValue(settings, 'aiApiKey');
+    state.webdavHasCredentials = hasSecretValue(settings, 'webdavUsername') ||
+      hasSecretValue(settings, 'webdavPassword');
+    state.legacyPlaintextSecrets = !!(settings && settings.security && !settings.security.enabled &&
+      (hasSecretValue(settings, 'aiApiKey') || hasSecretValue(settings, 'webdavUsername') ||
+        hasSecretValue(settings, 'webdavPassword')));
+  }
+
+  // 全局只保留非敏感设置，凭据密文/明文都不进入 wdSettings。
+  function redactSettings(settings) {
+    if (!settings) return settings;
+    return Object.assign({}, settings, {
+      webdav: Object.assign({}, settings.webdav, { username: '', password: '' }),
+      ai: Object.assign({}, settings.ai, { apiKey: '' })
+    });
+  }
+
+  function updateSecretPresence() {
+    const legacy = state.legacyPlaintextSecrets;
+    const savedNote = legacy ? '已保存（尚未加密）；留空保持不变' : '已加密保存；留空保持不变';
+    const keyInput = $('ai-api-key');
+    const userInput = $('wd-username');
+    const passInput = $('wd-password');
+    if (keyInput) keyInput.placeholder = state.aiHasKey ? savedNote : '';
+    if (userInput) userInput.placeholder = state.webdavHasCredentials ? savedNote : '';
+    if (passInput) passInput.placeholder = state.webdavHasCredentials ? savedNote : '';
+  }
+
+  function updateSecurityUI() {
+    const sec = state.security || { enabled: false, autoLockMinutes: 0 };
+    const setupBlock = $('security-setup-block');
+    const unlockBlock = $('security-unlock-block');
+    const manageBlock = $('security-manage-block');
+    const changeBlock = $('security-change-block');
+    const status = $('security-status');
+    const unlocked = Secret.isUnlocked();
+    if (!setupBlock) return;
+    setupBlock.classList.toggle('hidden', !!sec.enabled);
+    unlockBlock.classList.toggle('hidden', !sec.enabled || unlocked);
+    manageBlock.classList.toggle('hidden', !sec.enabled || !unlocked);
+    if (changeBlock) changeBlock.classList.add('hidden');
+    const legacy = state.legacyPlaintextSecrets;
+    if (status) {
+      status.className = 'hint' + (legacy ? ' warning' : '');
+      if (!sec.enabled) {
+        status.textContent = legacy
+          ? '检测到旧版明文凭据：请设置主密码，系统会加密并删除明文字段后再允许继续使用。'
+          : '尚未设置主密码。保存 WebDAV 账号/密码或 AI API Key 前必须先设置，凭据不会以明文写入磁盘。';
+      } else if (!unlocked) {
+        status.textContent = '已锁定：WebDAV 同步与 AI 整理会提示先解锁；关闭浏览器也会自动锁定。';
+      } else {
+        status.textContent = '已解锁：凭据只在发起请求时临时解密，不会常驻全局配置对象。';
+      }
+    }
+    const auto = $('security-auto-lock');
+    if (auto) auto.value = String(Number(sec.autoLockMinutes) || 0);
+  }
+
+  async function focusSecuritySettings(message) {
+    if (message) toast(message, 'error');
+    openDrawer('settings');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const section = $('security-settings-section');
+    if (section && section.scrollIntoView) section.scrollIntoView({ block: 'start' });
+  }
+
+  let autoLockTimer = null;
+  function scheduleAutoLock() {
+    clearTimeout(autoLockTimer);
+    const minutes = state.security && state.security.enabled
+      ? Number(state.security.autoLockMinutes) || 0
+      : 0;
+    if (!minutes || !Secret.isUnlocked()) return;
+    autoLockTimer = setTimeout(() => {
+      lockVault(false);
+    }, minutes * 60000);
+  }
+
+  async function lockVault(showToast) {
+    clearTimeout(autoLockTimer);
+    if (state.aiAbort) closeAiDrawer();
+    await Secret.lock();
+    updateSecurityUI();
+    if (showToast) toast('已锁定：WebDAV 与 AI 需要解锁后使用', 'info');
+  }
+
+  async function setupMasterPassword() {
+    const input = $('security-setup-password');
+    try {
+      await Storage.setupMasterPassword(input.value);
+      input.value = '';
+      const raw = await Storage.loadSettings();
+      captureSecretPresence(raw);
+      wdSettings = redactSettings(raw);
+      state.security = raw.security;
+      updateSecretPresence();
+      updateSecurityUI();
+      scheduleAutoLock();
+      toast('主密码已设置，已有凭据已加密', 'success');
+    } catch (e) {
+      toast('设置主密码失败：' + (e.message || e), 'error');
+    }
+  }
+
+  async function unlockMasterPassword() {
+    const input = $('security-unlock-password');
+    try {
+      await Secret.unlock(input.value, state.security);
+      input.value = '';
+      updateSecurityUI();
+      scheduleAutoLock();
+      toast('已解锁', 'success');
+    } catch (e) {
+      toast('解锁失败：' + (e.message || e), 'error');
+    }
+  }
+
+  async function changeMasterPassword() {
+    try {
+      await Storage.changeMasterPassword(
+        $('security-change-current').value,
+        $('security-change-new').value
+      );
+      $('security-change-current').value = '';
+      $('security-change-new').value = '';
+      const raw = await Storage.loadSettings();
+      captureSecretPresence(raw);
+      wdSettings = redactSettings(raw);
+      state.security = raw.security;
+      updateSecurityUI();
+      scheduleAutoLock();
+      toast('主密码已更换，凭据已用新密钥重新加密', 'success');
+    } catch (e) {
+      toast('更换主密码失败：' + (e.message || e), 'error');
+    }
+  }
+
+  async function clearMasterPassword() {
+    if (!confirm('清除主密码会删除已加密的 WebDAV 用户名/密码与 AI API Key，且不会回退为明文保存。继续？')) {
+      return;
+    }
+    try {
+      await Storage.clearMasterPassword();
+      $('ai-api-key').value = '';
+      $('wd-username').value = '';
+      $('wd-password').value = '';
+      const raw = await Storage.loadSettings();
+      captureSecretPresence(raw);
+      wdSettings = redactSettings(raw);
+      state.security = raw.security;
+      updateSecretPresence();
+      updateSecurityUI();
+      clearTimeout(autoLockTimer);
+      toast('主密码已清除，已加密凭据已删除；请设置新主密码后重新填写', 'info');
+    } catch (e) {
+      toast('清除主密码失败：' + (e.message || e), 'error');
+    }
+  }
+
+  async function updateAutoLockSetting() {
+    try {
+      const raw = await Storage.setAutoLockMinutes(Number($('security-auto-lock').value));
+      captureSecretPresence(raw);
+      wdSettings = redactSettings(raw);
+      state.security = raw.security;
+      scheduleAutoLock();
+      toast('自动锁定设置已保存', 'success');
+    } catch (e) {
+      toast('保存自动锁定失败：' + (e.message || e), 'error');
+    }
   }
 
   // AI 与收藏行为各自有独立保存按钮，这里只读 WebDAV，避免误覆盖其他配置段。
   function readSettingsFromForm() {
-    return {
-      webdav: {
-        url: $('wd-url').value.trim(),
-        username: $('wd-username').value.trim(),
-        password: $('wd-password').value,
-        remoteDir: $('wd-remote-dir').value.trim() || '/open-collections',
-        autoSync: $('wd-autosync').checked,
-        intervalMinutes: Math.max(5, Number($('wd-interval').value) || 30)
-      }
+    const webdav = {
+      url: $('wd-url').value.trim(),
+      remoteDir: $('wd-remote-dir').value.trim() || '/open-collections',
+      autoSync: $('wd-autosync').checked,
+      intervalMinutes: Math.max(5, Number($('wd-interval').value) || 30)
     };
+    const username = $('wd-username').value.trim();
+    const password = $('wd-password').value;
+    if (username) webdav.username = username;
+    if (password) webdav.password = password;
+    return { webdav };
   }
 
   function setStatus(id, msg, type) {
@@ -1203,20 +1401,37 @@
 
   async function persistSettings(s, opts) {
     opts = opts || {};
-    wdSettings = await Storage.updateSettings(s);
-    state.aiConfig = wdSettings.ai;
-    state.batchCollectDaily = !!(wdSettings.behavior && wdSettings.behavior.batchCollectDaily);
-    state.aiIncludeInbox = !!(wdSettings.behavior && wdSettings.behavior.aiIncludeInbox);
-    state.allowDuplicateLinks = !!(wdSettings.behavior && wdSettings.behavior.allowDuplicateLinks);
+    const raw = await Storage.updateSettings(s);
+    captureSecretPresence(raw);
+    wdSettings = redactSettings(raw);
+    const a = raw.ai || {};
+    state.security = raw.security;
+    // 全局配置只保留非敏感字段，API Key 不进入可序列化状态对象。
+    state.aiConfig = {
+      baseUrl: a.baseUrl || '',
+      model: a.model || '',
+      categories: a.categories || []
+    };
+    state.batchCollectDaily = !!(raw.behavior && raw.behavior.batchCollectDaily);
+    state.aiIncludeInbox = !!(raw.behavior && raw.behavior.aiIncludeInbox);
+    state.allowDuplicateLinks = !!(raw.behavior && raw.behavior.allowDuplicateLinks);
+    updateSecretPresence();
+    updateSecurityUI();
+    scheduleAutoLock();
     if (opts.reschedule !== false) await sendMessage({ type: 'webdav-reschedule' });
   }
 
   async function saveSettings() {
     try {
       await persistSettings(readSettingsFromForm());
+      $('wd-username').value = '';
+      $('wd-password').value = '';
       setWDStatus('设置已保存' + (wdSettings.webdav.autoSync ? '，自动同步已启用' : ''), 'success');
     } catch (e) {
       setWDStatus('保存失败：' + (e.message || e), 'error');
+      if (e.code === 'setup-required' || e.code === 'locked') {
+        await focusSecuritySettings(e.message);
+      }
     }
   }
 
@@ -1431,12 +1646,14 @@
   function readAiForm() {
     let categories = Utils.normalizeCategories($('ai-categories').value.split(/[\n,，、]/));
     if (!categories.length) categories = AI.DEFAULT_CATEGORIES.slice();
-    return {
+    const cfg = {
       baseUrl: $('ai-base-url').value.trim(),
-      apiKey: $('ai-api-key').value.trim(),
       model: $('ai-model').value.trim(),
       categories
     };
+    const apiKey = $('ai-api-key').value.trim();
+    if (apiKey) cfg.apiKey = apiKey;
+    return cfg;
   }
 
   async function refreshAiCacheInfo() {
@@ -1473,22 +1690,74 @@
         return;
       }
     }
+    if (cfg.apiKey && (!state.security || !state.security.enabled)) {
+      setAiStatus('请先设置主密码，API Key 不会以明文保存', 'error');
+      await focusSecuritySettings();
+      return;
+    }
+    if (cfg.apiKey && !Secret.isUnlocked()) {
+      setAiStatus('主密码已锁定，请先解锁后再保存 API Key', 'error');
+      await focusSecuritySettings();
+      return;
+    }
     try {
       await persistSettings({ ai: cfg }, { reschedule: false });
+      $('ai-api-key').value = '';
       $('ai-categories').value = wdSettings.ai.categories.join('\n');
-      setAiStatus('设置已保存', 'success');
+      updateSecretPresence();
+      updateSecurityUI();
+      setAiStatus(state.aiHasKey
+        ? '设置已保存，API Key 已加密存储'
+        : '设置已保存；使用 AI 前需设置主密码并填写 API Key', 'success');
     } catch (e) {
       setAiStatus('保存失败：' + (e.message || e), 'error');
+      if (e.code === 'setup-required' || e.code === 'locked') {
+        await focusSecuritySettings();
+      }
     }
+  }
+
+  async function resolveAiKey(typedKey) {
+    if (typedKey) return typedKey;
+    if (!state.security || !state.security.enabled) {
+      await focusSecuritySettings();
+      throw new Error('请先设置主密码，AI API Key 不会以明文保存');
+    }
+    const secrets = await Storage.loadSecrets();
+    return secrets.aiApiKey || '';
   }
 
   async function testAiConnection() {
     const cfg = readAiForm();
-    if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
+    if (!cfg.baseUrl || !cfg.model) {
       setAiStatus('请先填写接口地址、API Key 与模型名称', 'error');
       return;
     }
-    const granted = await requestOriginPermission(cfg.baseUrl);
+    if (cfg.apiKey && (!state.security || !state.security.enabled)) {
+      setAiStatus('请先设置主密码，API Key 不会以明文保存', 'error');
+      await focusSecuritySettings();
+      return;
+    }
+    if (cfg.apiKey && !Secret.isUnlocked()) {
+      setAiStatus('主密码已锁定，请先解锁后再测试连接', 'error');
+      await focusSecuritySettings();
+      return;
+    }
+    let apiKey;
+    try {
+      apiKey = await resolveAiKey(cfg.apiKey);
+    } catch (e) {
+      setAiStatus(e.message, 'error');
+      await focusSecuritySettings();
+      return;
+    }
+    if (!apiKey) {
+      setAiStatus('请先填写 API Key 或先在设置中保存 API Key', 'error');
+      return;
+    }
+    // 只把密钥放入本次请求的临时配置，不写入 state。
+    const requestCfg = { baseUrl: cfg.baseUrl, model: cfg.model, apiKey };
+    const granted = await requestOriginPermission(requestCfg.baseUrl);
     if (!granted) {
       setAiStatus('未获得访问该接口的网络权限，请重试并在弹窗中选择允许', 'error');
       return;
@@ -1496,17 +1765,25 @@
     setAiStatus('正在测试连接…', '');
     let res;
     try {
-      res = await AI.testConnection(cfg);
+      res = await AI.testConnection(requestCfg);
     } catch (e) {
       setAiStatus('连接失败：' + (e.message || e), 'error');
       return;
     }
     try {
-      await persistSettings({ ai: cfg }, { reschedule: false });
+      const patch = { ai: { baseUrl: cfg.baseUrl, model: cfg.model, categories: cfg.categories } };
+      if (cfg.apiKey) patch.ai.apiKey = cfg.apiKey;
+      await persistSettings(patch, { reschedule: false });
+      $('ai-api-key').value = '';
       $('ai-categories').value = wdSettings.ai.categories.join('\n');
+      updateSecretPresence();
+      updateSecurityUI();
       setAiStatus('连接成功 ✓ 设置已保存' + (res.reply ? `（${Utils.truncate(res.reply, 20)}）` : ''), 'success');
     } catch (e) {
       setAiStatus('连接成功，但保存设置失败：' + (e.message || e), 'error');
+      if (e.code === 'setup-required' || e.code === 'locked') {
+        await focusSecuritySettings();
+      }
     }
   }
 
@@ -1516,14 +1793,36 @@
       setWDStatus('请先填写 WebDAV 服务器地址', 'error');
       return;
     }
-    const granted = await requestOriginPermission(s.webdav.url);
+    const wd = Object.assign({}, s.webdav);
+    const typedSecrets = !!(wd.username || wd.password);
+    if (typedSecrets && (!state.security || !state.security.enabled)) {
+      setWDStatus('请先设置主密码，WebDAV 凭据不会以明文保存', 'error');
+      await focusSecuritySettings();
+      return;
+    }
+    if (!typedSecrets || !wd.username || !wd.password) {
+      try {
+        const secrets = await Storage.loadSecrets();
+        wd.username = wd.username || secrets.webdavUsername;
+        wd.password = wd.password || secrets.webdavPassword;
+      } catch (e) {
+        setWDStatus(e.message, 'error');
+        await focusSecuritySettings();
+        return;
+      }
+    }
+    if (!wd.username) {
+      setWDStatus('请先填写用户名', 'error');
+      return;
+    }
+    const granted = await requestOriginPermission(wd.url);
     if (!granted) {
       setWDStatus('未获得访问该服务器的网络权限，请重试并在弹窗中选择允许', 'error');
       return;
     }
     setWDStatus('正在测试连接…', '');
     try {
-      await WebDAV.testConnection(s.webdav);
+      await WebDAV.testConnection(wd);
       setWDStatus('连接成功 ✓', 'success');
     } catch (e) {
       setWDStatus('连接失败：' + (e.message || e), 'error');
@@ -1689,8 +1988,8 @@
 
   async function startAiOrganize() {
     const cfg = state.aiConfig;
-    if (!cfg || !cfg.baseUrl || !cfg.apiKey || !cfg.model) {
-      toast('请先在设置中配置 AI 接口', 'error');
+    if (!cfg || !cfg.baseUrl || !cfg.model) {
+      toast('请先在设置中配置 AI 接口与模型', 'error');
       openSettingsForAi();
       return;
     }
@@ -1714,11 +2013,26 @@
     }
     if (state.aiAbort) return;
 
+    let apiKey;
+    try {
+      apiKey = await resolveAiKey('');
+    } catch (e) {
+      await focusSecuritySettings(e.message);
+      return;
+    }
+    if (!apiKey) {
+      toast('请先在设置中填写 AI API Key', 'error');
+      openSettingsForAi();
+      return;
+    }
+    // 密钥只用于本次请求的临时配置，不写入 state.aiConfig。
+    const requestCfg = { baseUrl: cfg.baseUrl, model: cfg.model, categories: cfg.categories, apiKey };
+
     const btn = $('btn-ai-organize');
     btn.disabled = true;
     let runId = state.aiRunId;
     try {
-      const granted = await requestOriginPermission(cfg.baseUrl);
+      const granted = await requestOriginPermission(requestCfg.baseUrl);
       if (!granted) {
         toast('未获得访问该 AI 接口的网络权限', 'error');
         return;
@@ -1749,7 +2063,7 @@
       const cache = await Storage.loadAiCache();
       if (runId !== state.aiRunId) return;
       const plan = await AI.organizeGroup({
-        cfg,
+        cfg: requestCfg,
         groupName: group.name,
         existingNames,
         categories: categoryList,
@@ -1867,20 +2181,35 @@
       setWDStatus('未获得访问该服务器的网络权限，请重试并在弹窗中选择允许', 'error');
       return;
     }
-    if (!s.webdav.username) {
-      setWDStatus('请先填写用户名', 'error');
-      return;
+    const typedSecrets = !!(s.webdav.username || s.webdav.password);
+    if (!typedSecrets) {
+      try {
+        const secrets = await Storage.loadSecrets();
+        if (!secrets.webdavUsername) {
+          setWDStatus('请先填写用户名', 'error');
+          return;
+        }
+      } catch (e) {
+        setWDStatus(e.message, 'error');
+        await focusSecuritySettings();
+        return;
+      }
     }
     setWDStatus(`正在${label}…`, '');
     try {
-      // 先落盘当前表单，保证后台读到的是最新配置。
+      // 先落盘当前表单；后台同步时再按需解密凭据。
       await persistSettings(s);
+      $('wd-username').value = '';
+      $('wd-password').value = '';
       const res = await sendMessage({ type: 'webdav-sync', mode });
       const result = res && res.result;
       setWDStatus(`${label}完成 ✓${result ? `（${result.groups} 个分组）` : ''}`, 'success');
       await loadAndRender();
     } catch (e) {
       setWDStatus(`${label}失败：${e.message || e}`, 'error');
+      if (e.code === 'setup-required' || e.code === 'locked') {
+        await focusSecuritySettings();
+      }
     }
   }
 
@@ -1956,6 +2285,25 @@
     // 收藏行为
     $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
     $('behavior-batch-daily').addEventListener('change', updateAiInboxOptionVisibility);
+
+    // 主密码与本地加密
+    $('btn-security-setup').addEventListener('click', setupMasterPassword);
+    $('btn-security-unlock').addEventListener('click', unlockMasterPassword);
+    $('btn-security-lock').addEventListener('click', () => lockVault(true));
+    $('btn-security-change').addEventListener('click', () => {
+      $('security-change-block').classList.remove('hidden');
+    });
+    $('btn-security-change-cancel').addEventListener('click', () => {
+      $('security-change-block').classList.add('hidden');
+    });
+    $('btn-security-change-confirm').addEventListener('click', changeMasterPassword);
+    $('btn-security-clear').addEventListener('click', clearMasterPassword);
+    $('security-auto-lock').addEventListener('change', updateAutoLockSetting);
+    ['mousedown', 'keydown', 'touchstart'].forEach((evt) => {
+      document.addEventListener(evt, () => {
+        if (Secret.isUnlocked()) scheduleAutoLock();
+      }, { passive: true });
+    });
     $('btn-dedupe-scan').addEventListener('click', () => scanDuplicates(false));
     $('btn-dedupe-run').addEventListener('click', runDedupeCleanup);
     $('btn-dedupe-cancel').addEventListener('click', closeDedupeDrawer);
@@ -2025,11 +2373,23 @@
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes[Storage.SETTINGS_KEY]) {
         Storage.loadSettings()
-          .then((s) => {
-            state.aiConfig = s.ai;
+          .then(async (s) => {
+            captureSecretPresence(s);
+            wdSettings = redactSettings(s);
+            state.security = s.security;
+            const a = s.ai || {};
+            state.aiConfig = {
+              baseUrl: a.baseUrl || '',
+              model: a.model || '',
+              categories: a.categories || []
+            };
             state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
             state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
             state.allowDuplicateLinks = !!(s.behavior && s.behavior.allowDuplicateLinks);
+            await Secret.restore(s.security);
+            updateSecretPresence();
+            updateSecurityUI();
+            scheduleAutoLock();
             refreshCollectMenuCopy();
           })
           .catch(() => {});
@@ -2052,11 +2412,23 @@
     setGroupsFolded(NARROW_QUERY.matches);
     bindEvents();
     Storage.loadSettings()
-      .then((s) => {
-        state.aiConfig = s.ai;
+      .then(async (s) => {
+        captureSecretPresence(s);
+        wdSettings = redactSettings(s);
+        state.security = s.security;
+        const a = s.ai || {};
+        state.aiConfig = {
+          baseUrl: a.baseUrl || '',
+          model: a.model || '',
+          categories: a.categories || []
+        };
         state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
         state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
         state.allowDuplicateLinks = !!(s.behavior && s.behavior.allowDuplicateLinks);
+        await Secret.restore(s.security);
+        updateSecretPresence();
+        updateSecurityUI();
+        scheduleAutoLock();
         refreshCollectMenuCopy();
       })
       .catch((e) => console.warn('[OpenCollections] load settings failed:', e));

@@ -1,5 +1,5 @@
 // background.js — Service Worker：快捷键、侧边栏/窗口、消息路由、定时同步。
-importScripts('js/utils.js', 'js/storage.js', 'js/webdav.js');
+importScripts('js/utils.js', 'js/secret.js', 'js/storage.js', 'js/webdav.js');
 
 const MANAGEMENT_PAGE = 'management.html';
 

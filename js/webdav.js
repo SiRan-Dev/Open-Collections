@@ -172,8 +172,15 @@
   WebDAV.runSync = async function (mode) {
     mode = mode || 'sync';
     const settings = await Storage.loadSettings();
-    const wd = settings.webdav || {};
-    if (!wd.url || !wd.username) throw { code: 0, message: '请先在设置中填写 WebDAV 地址与用户名' };
+    const wdConfig = settings.webdav || {};
+    if (!wdConfig.url) throw { code: 0, message: '请先在设置中填写 WebDAV 地址' };
+    // 凭据只在发请求前临时解密，不写入设置对象，也不参与上传内容。
+    const secrets = await Storage.loadSecrets();
+    const wd = Object.assign({}, wdConfig, {
+      username: secrets.webdavUsername,
+      password: secrets.webdavPassword
+    });
+    if (!wd.username) throw { code: 0, message: '请先在设置中填写 WebDAV 用户名' };
 
     // 同步前本地备份。
     const backupKey = await Storage.createBackup('sync-before');

@@ -143,6 +143,65 @@
         <button class="btn-icon" data-close="settings" aria-label="关闭设置"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="drawer-body">
+        <section id="security-settings-section" class="settings-section">
+          <h3>主密码与本地加密</h3>
+          <p id="security-status" class="hint"></p>
+          <div id="security-setup-block">
+            <div class="form-row">
+              <label>主密码（至少 8 位）</label>
+              <input id="security-setup-password" class="text-input" type="password" autocomplete="new-password" />
+            </div>
+            <div class="settings-actions">
+              <button id="btn-security-setup" class="btn btn-primary">设置主密码并加密已有凭据</button>
+            </div>
+          </div>
+          <div id="security-unlock-block" class="hidden">
+            <div class="form-row">
+              <label>输入主密码解锁</label>
+              <input id="security-unlock-password" class="text-input" type="password" autocomplete="off" />
+            </div>
+            <div class="settings-actions">
+              <button id="btn-security-unlock" class="btn btn-primary">解锁</button>
+            </div>
+          </div>
+          <div id="security-manage-block" class="hidden">
+            <div class="settings-actions">
+              <button id="btn-security-lock" class="btn btn-ghost">立即锁定</button>
+              <button id="btn-security-change" class="btn btn-ghost">更换主密码</button>
+              <button id="btn-security-clear" class="btn btn-ghost btn-danger-text">清除主密码</button>
+            </div>
+            <div class="form-row">
+              <label>空闲自动锁定</label>
+              <select id="security-auto-lock" class="text-input">
+                <option value="0">关闭</option>
+                <option value="5">5 分钟</option>
+                <option value="15">15 分钟</option>
+                <option value="30">30 分钟</option>
+                <option value="60">60 分钟</option>
+              </select>
+            </div>
+          </div>
+          <div id="security-change-block" class="hidden">
+            <div class="form-row">
+              <label>当前主密码</label>
+              <input id="security-change-current" class="text-input" type="password" autocomplete="off" />
+            </div>
+            <div class="form-row">
+              <label>新主密码（至少 8 位）</label>
+              <input id="security-change-new" class="text-input" type="password" autocomplete="new-password" />
+            </div>
+            <div class="settings-actions">
+              <button id="btn-security-change-confirm" class="btn btn-primary">确认更换</button>
+              <button id="btn-security-change-cancel" class="btn btn-ghost">取消</button>
+            </div>
+          </div>
+          <p class="hint">
+            威胁模型：主密码经 PBKDF2-SHA256 派生密钥，WebDAV 账号/密码与 AI API Key 分别用 AES-GCM 加密；
+            磁盘只保存 salt、IV 与密文，不保存明文或派生密钥。解锁状态仅存于内存和浏览器会话存储，关闭浏览器即失效，也可手动锁定。
+            这能降低浏览器存储被离线读取时的泄露风险，但**不能**防御已入侵本机、能读取扩展内存或注入页面的恶意程序/扩展；
+            也不能替代系统磁盘加密。若无法信任当前设备，请不要保存凭据。
+          </p>
+        </section>
         <section class="settings-section">
           <h3>收藏行为</h3>
           <div class="form-row form-inline">
@@ -192,8 +251,8 @@
         <section class="settings-section">
           <h3>WebDAV 云同步</h3>
           <p class="hint warning">
-            账号密码以明文形式保存在本地 chrome.storage 中，不会上传给任何第三方（仅用于向你自己的 WebDAV 服务器认证）。
-            若担心本机泄密，请不要启用，或使用专用密码。
+            凭据经主密码加密后保存在本地 chrome.storage，不会上传给任何第三方（仅用于向你自己的 WebDAV 服务器认证）。
+            同步时只在内存中临时解密；锁定状态下同步会提示先解锁。
           </p>
           <div class="form-row">
             <label>服务器地址</label>
@@ -235,7 +294,8 @@
         <section id="ai-settings-section" class="settings-section">
           <h3>AI 自动整理</h3>
           <p class="hint warning">
-            API Key 以明文形式保存在本地 chrome.storage 中。整理时会把当前分组的标题、URL、笔记与摘录片段发送到你填写的接口，不会发送给其他第三方。
+            API Key 经主密码加密后保存在本地 chrome.storage。整理时会把当前范围的标题、域名、笔记与摘录片段发送到你填写的接口，不会发送给其他第三方；
+            请求前才临时解密，锁定状态下会提示先解锁。
           </p>
           <div class="form-row">
             <label>接口地址（Base URL，通常以 /v1 结尾）</label>
@@ -403,6 +463,7 @@
   </div>
 
   <script src="js/utils.js"></script>
+  <script src="js/secret.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/webdav.js"></script>
   <script src="js/ai.js"></script>

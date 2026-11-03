@@ -32,7 +32,17 @@
       apiKey: '',
       model: '',
       categories: Utils.DEFAULT_AI_CATEGORIES.slice()
-    }
+    },
+    security: {
+      enabled: false,
+      version: 1,
+      kdf: 'PBKDF2-SHA256',
+      iterations: 600000,
+      salt: '',
+      check: null,
+      autoLockMinutes: 0
+    },
+    secrets: {}
   };
 
   const DAILY_GROUP_PREFIX = 'daily-';
@@ -790,6 +800,42 @@
   };
 
   // ---- 设置（WebDAV、收藏行为等）----
+  const SECRET_FIELDS = [
+    { name: 'webdavUsername', path: ['webdav', 'username'], label: 'WebDAV 用户名' },
+    { name: 'webdavPassword', path: ['webdav', 'password'], label: 'WebDAV 密码' },
+    { name: 'aiApiKey', path: ['ai', 'apiKey'], label: 'AI API Key' }
+  ];
+  Storage.SECRET_FIELDS = SECRET_FIELDS.map((f) => ({ name: f.name, label: f.label }));
+
+  function readPath(obj, path) {
+    let cur = obj;
+    for (const key of path) {
+      if (!cur || typeof cur !== 'object') return '';
+      cur = cur[key];
+    }
+    return typeof cur === 'string' ? cur : '';
+  }
+
+  function writePath(obj, path, value) {
+    let cur = obj;
+    for (let i = 0; i < path.length - 1; i++) {
+      if (!cur[path[i]] || typeof cur[path[i]] !== 'object') cur[path[i]] = {};
+      cur = cur[path[i]];
+    }
+    cur[path[path.length - 1]] = value;
+  }
+
+  function secretEnvelope(raw) {
+    return raw && typeof raw === 'object' &&
+      typeof raw.iv === 'string' && typeof raw.v === 'string'
+      ? { iv: raw.iv, v: raw.v }
+      : null;
+  }
+
+  function hasPlaintextSecrets(settings) {
+    return SECRET_FIELDS.some((field) => readPath(settings, field.path) !== '');
+  }
+
   function normalizeSettings(raw) {
     const base = Utils.clone(DEFAULT_SETTINGS);
     if (!raw || typeof raw !== 'object') return base;
@@ -816,9 +862,32 @@
       model: typeof ai.model === 'string' ? ai.model : '',
       categories: categories.length ? categories : DEFAULT_SETTINGS.ai.categories.slice()
     };
+
+    const security = raw.security && typeof raw.security === 'object' ? raw.security : {};
+    base.security = {
+      enabled: !!security.enabled,
+      version: 1,
+      kdf: 'PBKDF2-SHA256',
+      iterations: Math.max(100000, Number(security.iterations) || DEFAULT_SETTINGS.security.iterations),
+      salt: typeof security.salt === 'string' ? security.salt : '',
+      check: secretEnvelope(security.check),
+      autoLockMinutes: Math.max(0, Math.min(240, Number(security.autoLockMinutes) || 0))
+    };
+    const secrets = raw.secrets && typeof raw.secrets === 'object' ? raw.secrets : {};
+    base.secrets = {};
+    for (const field of SECRET_FIELDS) {
+      const envelope = secretEnvelope(secrets[field.name]);
+      if (envelope) base.secrets[field.name] = envelope;
+    }
+    // 已启用主密码时，磁盘上绝不保留明文凭据。
+    if (base.security.enabled) {
+      for (const field of SECRET_FIELDS) writePath(base, field.path, '');
+    }
+
     // 保留未知顶层字段，便于后续增加配置段时不丢数据。
     for (const key of Object.keys(raw)) {
-      if (key !== 'webdav' && key !== 'behavior' && key !== 'ai') base[key] = raw[key];
+      if (key !== 'webdav' && key !== 'behavior' && key !== 'ai' &&
+        key !== 'security' && key !== 'secrets') base[key] = raw[key];
     }
     return base;
   }
@@ -841,6 +910,7 @@
   };
 
   // 合并写入，避免只保存某一个配置段时清空其他配置。
+  // 敏感字段：未设主密码时拒绝写入明文；已启用时在写入前加密并清空明文字段。
   Storage.updateSettings = async function (patch) {
     const current = await Storage.loadSettings();
     const p = patch && typeof patch === 'object' ? patch : {};
@@ -849,7 +919,171 @@
       ...p,
       webdav: { ...current.webdav, ...(p.webdav || {}) },
       behavior: { ...current.behavior, ...(p.behavior || {}) },
-      ai: { ...current.ai, ...(p.ai || {}) }
+      ai: { ...current.ai, ...(p.ai || {}) },
+      security: current.security,
+      secrets: current.secrets
+    });
+
+    const inputs = {};
+    for (const field of SECRET_FIELDS) {
+      const value = readPath(p, field.path);
+      if (typeof value === 'string' && value.trim()) inputs[field.name] = value;
+    }
+    if (Object.keys(inputs).length) {
+      if (!current.security.enabled) {
+        const err = new Error('请先在「设置 → 主密码与本地加密」设置主密码，凭据不会以明文保存');
+        err.code = 'setup-required';
+        throw err;
+      }
+      const key = await Secret.ensureKey(current.security);
+      if (!key) {
+        const err = new Error('主密码已锁定：请先在设置中解锁后再保存凭据');
+        err.code = 'locked';
+        throw err;
+      }
+      for (const name of Object.keys(inputs)) {
+        next.secrets[name] = await Secret.encrypt(key, inputs[name]);
+      }
+    }
+    // 已启用加密时，绝不把明文写回磁盘。
+    if (next.security.enabled) {
+      for (const field of SECRET_FIELDS) writePath(next, field.path, '');
+    }
+    await writeSettings(next);
+    return next;
+  };
+
+  // 读取并解密全部敏感字段；只在调用方即将使用时临时解密。
+  Storage.loadSecrets = async function () {
+    const settings = await Storage.loadSettings();
+    if (!settings.security.enabled) {
+      const err = new Error(hasPlaintextSecrets(settings)
+        ? '检测到未加密的凭据：请先在「设置 → 主密码与本地加密」设置主密码完成迁移'
+        : '请先在「设置 → 主密码与本地加密」设置主密码');
+      err.code = 'setup-required';
+      throw err;
+    }
+    const key = await Secret.ensureKey(settings.security);
+    if (!key) {
+      const err = new Error('主密码已锁定：请先在设置中解锁');
+      err.code = 'locked';
+      throw err;
+    }
+    const out = {};
+    for (const field of SECRET_FIELDS) {
+      const envelope = settings.secrets[field.name];
+      if (!envelope) {
+        out[field.name] = '';
+        continue;
+      }
+      try {
+        out[field.name] = await Secret.decrypt(key, envelope);
+      } catch (e) {
+        const err = new Error('凭据解密失败：主密码可能不正确或加密数据已损坏');
+        err.code = 'decrypt';
+        throw err;
+      }
+    }
+    return out;
+  };
+
+  Storage.setupMasterPassword = async function (password) {
+    const value = String(password || '');
+    if (value.length < 8) throw new Error('主密码至少需要 8 位');
+    const settings = await Storage.loadSettings();
+    if (settings.security.enabled) throw new Error('已经设置过主密码，请使用「更换主密码」');
+    const created = await Secret.create(value);
+    const secrets = {};
+    for (const field of SECRET_FIELDS) {
+      const plain = readPath(settings, field.path);
+      if (plain) secrets[field.name] = await Secret.encrypt(created.key, plain);
+    }
+    const check = await Secret.encrypt(created.key, Secret.CANARY);
+    const next = normalizeSettings({
+      ...settings,
+      secrets,
+      security: {
+        enabled: true,
+        version: 1,
+        kdf: 'PBKDF2-SHA256',
+        iterations: created.iterations,
+        salt: created.salt,
+        check,
+        autoLockMinutes: settings.security.autoLockMinutes || 0
+      }
+    });
+    // 一次性原子写入：失败时旧设置与明文凭据保持原样，不会出现半迁移状态。
+    await writeSettings(next);
+    await Secret.adopt(created.key, created.salt);
+    return next;
+  };
+
+  Storage.changeMasterPassword = async function (currentPassword, newPassword) {
+    const value = String(newPassword || '');
+    if (value.length < 8) throw new Error('新主密码至少需要 8 位');
+    const settings = await Storage.loadSettings();
+    if (!settings.security.enabled) throw new Error('尚未设置主密码');
+    const oldKey = await Secret.verify(currentPassword, settings.security);
+    const plain = {};
+    for (const field of SECRET_FIELDS) {
+      const envelope = settings.secrets[field.name];
+      if (!envelope) continue;
+      plain[field.name] = await Secret.decrypt(oldKey, envelope);
+    }
+    const created = await Secret.create(value);
+    const secrets = {};
+    for (const name of Object.keys(plain)) {
+      secrets[name] = await Secret.encrypt(created.key, plain[name]);
+    }
+    const check = await Secret.encrypt(created.key, Secret.CANARY);
+    const next = normalizeSettings({
+      ...settings,
+      secrets,
+      security: {
+        ...settings.security,
+        iterations: created.iterations,
+        salt: created.salt,
+        check
+      }
+    });
+    await writeSettings(next);
+    await Secret.adopt(created.key, created.salt);
+    return next;
+  };
+
+  // 清除主密码：同时丢弃已加密凭据（之后需要重新填写），绝不回退为明文保存。
+  Storage.clearMasterPassword = async function () {
+    const settings = await Storage.loadSettings();
+    if (!settings.security.enabled) return settings;
+    const key = await Secret.ensureKey(settings.security);
+    if (!key) throw new Error('主密码已锁定：请先解锁后再清除');
+    const next = normalizeSettings({
+      ...settings,
+      secrets: {},
+      security: {
+        enabled: false,
+        version: 1,
+        kdf: 'PBKDF2-SHA256',
+        iterations: DEFAULT_SETTINGS.security.iterations,
+        salt: '',
+        check: null,
+        autoLockMinutes: settings.security.autoLockMinutes || 0
+      }
+    });
+    for (const field of SECRET_FIELDS) writePath(next, field.path, '');
+    await writeSettings(next);
+    await Secret.lock();
+    return next;
+  };
+
+  Storage.setAutoLockMinutes = async function (minutes) {
+    const settings = await Storage.loadSettings();
+    const next = normalizeSettings({
+      ...settings,
+      security: {
+        ...settings.security,
+        autoLockMinutes: Math.max(0, Math.min(240, Number(minutes) || 0))
+      }
     });
     await writeSettings(next);
     return next;
