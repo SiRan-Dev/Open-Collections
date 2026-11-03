@@ -3205,8 +3205,9 @@
     // 「在独立窗口打开」只在侧边栏场景有意义：独立窗口内隐藏（display:none，不占位）。
     const openWindowBtn = $('btn-window');
     if (openWindowBtn) openWindowBtn.classList.toggle('hidden', uiScene === 'standalone');
-    // 独立窗口是扩展页面，没有网页选区可读：隐藏「摘录」按钮（快捷键命令不受影响，
-    // 仍作用于最近活跃的普通网页标签）。顶部只保留「收藏并关闭标签页」主按钮，
+    // 独立窗口是扩展页面，没有网页选区可读：隐藏「摘录」按钮。快捷键命令在独立窗口
+    // 聚焦时同样不作用于网页（getActiveWebTab 只取当前聚焦窗口的活动标签），请先切回
+    // 普通浏览器窗口再按。顶部只保留「收藏并关闭标签页」主按钮，
     // 添加当前页面/下拉菜单仅属于侧边栏场景。
     const excerptBtn = $('btn-save-sel');
     if (excerptBtn) excerptBtn.classList.toggle('hidden', uiScene === 'standalone');
