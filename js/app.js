@@ -173,11 +173,14 @@
   }
 
   // ---- 分组栏折叠 ----
-  // 按运行场景分离默认值与记忆：独立窗口（standalone=1）默认展开，侧边栏默认收起；
-  // 场景由打开时的 URL 参数判定（可靠，不受用户手动拉宽侧边栏影响），折叠状态分键持久化，
-  // 用户手动切换后记住该场景的选择。收起只是折叠：分组面板保留在 DOM，顶栏「分组」入口
-  // 始终可见可点，随时一键展开；绝不出现不可恢复的整块消失。
+  // 按运行场景分离默认值：独立窗口（standalone=1）默认展开并记忆用户偏好；侧边栏每次
+  // 冷启动都确定性折叠，不读回也不写入展开态（避免上次会话手动展开导致下次冷启动又展开）。
+  // 场景由打开时的 URL 参数判定（可靠，不受用户手动拉宽侧边栏影响）。HTML 首帧即带
+  // groups-collapsed，侧边栏不依赖异步读回，也不会因宽度不可测而误判。收起只是折叠：
+  // 分组面板保留在 DOM，顶栏「分组」入口始终可见可点，随时一键展开；绝不出现不可恢复的整块消失。
   let uiScene = 'sidepanel';
+  // 用户手动切换过折叠态：晚到的偏好读回不得覆盖用户当前选择。
+  let foldUserTouched = false;
   // ≤520px 视口时展开的分组栏是浮层，选中分组后自动收起浮层（不持久化，不算用户偏好）。
   const NARROW_QUERY = window.matchMedia('(max-width: 520px)');
 
@@ -190,7 +193,11 @@
     els.btnToggleGroups.setAttribute('aria-label', label);
     els.btnToggleGroups.title = label;
     if (persist) {
-      Storage.saveFoldState({ [uiScene]: folded }).catch(() => {});
+      foldUserTouched = true;
+      // 只记忆独立窗口的偏好；侧边栏不持久化展开态，保证每次冷启动都折叠。
+      if (uiScene === 'standalone') {
+        Storage.saveFoldState({ [uiScene]: folded }).catch(() => {});
+      }
     }
   }
 
@@ -3186,11 +3193,25 @@
       about.textContent = 'Open Collections v' + chrome.runtime.getManifest().version +
         ' · 本地集锦管理。数据存放于浏览器 chrome.storage.local。';
     }
-    // 场景判定：独立窗口由 background 创建时带 standalone=1，可靠且不受拉宽侧边栏影响；
-    // 侧边栏（无参数）默认收起分组栏，独立窗口默认展开；用户偏好按场景分别记忆。
+    // 场景判定：独立窗口由 background 创建时带 standalone=1，可靠且不受拉宽侧边栏影响。
     uiScene = /[?&]standalone=1/.test(location.search) ? 'standalone' : 'sidepanel';
     if (uiScene === 'standalone') {
       document.body.classList.add('standalone-window');
+      // 独立窗口默认展开；随后再以读回的偏好为准（读回慢或失败也保持展开）。
+      setGroupsFolded(false, false);
+      Storage.loadFoldState()
+        .then((state2) => {
+          if (foldUserTouched) return;
+          const stored = state2 && typeof state2.standalone === 'boolean' ? state2.standalone : null;
+          setGroupsFolded(stored == null ? false : stored, false);
+        })
+        .catch(() => {
+          if (!foldUserTouched) setGroupsFolded(false, false);
+        });
+    } else {
+      // 侧边栏冷启动确定性折叠：首帧已由 HTML 的 groups-collapsed 保证，这里同步再应用一次，
+      // 不读回、不写入侧边栏展开态。偏好读回延迟或上次会话残留的 sidepanel=false 都不会让它展开。
+      setGroupsFolded(true, false);
     }
     // 「在独立窗口打开」只在侧边栏场景有意义：独立窗口内隐藏（display:none，不占位）。
     const openWindowBtn = $('btn-window');
@@ -3208,13 +3229,6 @@
     if (addSplit) addSplit.classList.toggle('hidden', uiScene === 'standalone');
     const standaloneCollectBtn = $('btn-standalone-collect');
     if (standaloneCollectBtn) standaloneCollectBtn.classList.toggle('hidden', uiScene !== 'standalone');
-    Storage.loadFoldState()
-      .then((state2) => {
-        const stored = state2 && typeof state2[uiScene] === 'boolean' ? state2[uiScene] : null;
-        // 新用户默认：窄场景（侧边栏）收起，宽场景（独立窗口）展开。
-        setGroupsFolded(stored == null ? uiScene === 'sidepanel' : stored, false);
-      })
-      .catch(() => setGroupsFolded(uiScene === 'sidepanel', false));
     bindEvents();
     reportScreenInfo();
     window.addEventListener('resize', Utils.debounce(reportScreenInfo, 300));

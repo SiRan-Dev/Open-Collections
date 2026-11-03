@@ -1430,7 +1430,7 @@
   Storage.WINDOW_BOUNDS_KEY = WINDOW_BOUNDS_KEY;
   Storage.SCREEN_INFO_KEY = SCREEN_INFO_KEY;
 
-  // ---- 分组栏折叠状态（按场景分别持久化）----
+  // ---- 分组栏折叠状态（仅独立窗口持久化；侧边栏每次冷启动折叠，旧 sidepanel 键忽略）----
   const FOLD_STATE_KEY = 'openpocket:fold-state';
   Storage.FOLD_STATE_KEY = FOLD_STATE_KEY;
 
@@ -1443,8 +1443,16 @@
     });
   };
 
-  // patch 形如 { sidepanel: true, standalone: false }，两场景互不影响。
+  // patch 形如 { standalone: true }；传 null 表示清空全部折叠偏好（恢复默认）。
   Storage.saveFoldState = async function (patch) {
+    if (patch === null) {
+      return new Promise((resolve, reject) => {
+        chrome.storage.local.remove(FOLD_STATE_KEY, () => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve({});
+        });
+      });
+    }
     const current = await Storage.loadFoldState();
     const next = Object.assign({}, current, patch);
     return new Promise((resolve, reject) => {

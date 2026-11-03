@@ -30,11 +30,11 @@
     <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
   </svg>
 
-  <div id="app" class="app">
+  <div id="app" class="app groups-collapsed">
     <!-- 顶栏 -->
     <header class="topbar">
-      <button id="btn-toggle-groups" class="btn btn-ghost btn-icon" title="折叠分组栏"
-        aria-label="折叠分组栏" aria-expanded="true">
+      <button id="btn-toggle-groups" class="btn btn-ghost btn-icon" title="展开分组栏"
+        aria-label="展开分组栏" aria-expanded="false">
         <svg class="ico" aria-hidden="true"><use href="#i-panel-left"/></svg>
       </button>
       <div class="topbar-actions">
@@ -198,7 +198,7 @@
 
         <section id="general-section" class="settings-section">
           <h3>常规</h3>
-          <p class="hint">收藏与设置仅保存在本机浏览器存储；AI 整理与云同步默认关闭，启用后才会联网。分组栏折叠状态按「侧边栏 / 独立窗口」分别记忆，可点顶栏按钮切换。</p>
+          <p class="hint">收藏与设置仅保存在本机浏览器存储；AI 整理与云同步默认关闭，启用后才会联网。独立窗口会记住分组栏的展开/折叠；侧边栏每次冷启动默认折叠，可点顶栏按钮切换。</p>
           <div class="settings-actions">
             <button id="btn-reset-onboarding" class="btn btn-ghost btn-sm">重新显示隐私提示条</button>
             <button id="btn-reset-general" class="btn btn-ghost btn-sm">恢复默认</button>
