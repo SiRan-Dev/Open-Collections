@@ -1263,8 +1263,12 @@
       await chrome.tabs.create({ active: true, windowId: win.id });
       const ids = items.map((item) => item.tab.id);
       if (ids.length) {
-        await chrome.tabs.remove(ids);
-        closed = ids.length;
+        // 逐个关闭：若某个标签在收藏前已被关掉，批量 remove 会整体失败，
+        // 导致已写入的收藏提示报错且界面不刷新；逐个关闭只统计真正关掉的标签。
+        const results = await Promise.all(
+          ids.map((id) => chrome.tabs.remove(id).then(() => true, () => false))
+        );
+        closed = results.filter(Boolean).length;
       }
     }
 
