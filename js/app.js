@@ -820,9 +820,10 @@
     li.appendChild(body);
 
     // 图钉：仅默认集锦（system 分组）内显示；固定条目对 AI 整理与清理免疫。
+    // 与编辑/删除共用 .card-action 统一样式，已固定仅改变图标颜色。
     if (group.system && !searching) {
       const pinBtn = document.createElement('button');
-      pinBtn.className = 'card-pin' + (c.pinned ? ' active' : '');
+      pinBtn.className = 'card-action card-pin' + (c.pinned ? ' active' : '');
       pinBtn.title = c.pinned ? '取消固定（恢复参与 AI 整理与清理）' : '固定（AI 整理与清理不会移动它）';
       pinBtn.setAttribute('aria-label', pinBtn.title);
       pinBtn.appendChild(iconSvg('pin'));
@@ -840,7 +841,7 @@
     }
 
     const editBtn = document.createElement('button');
-    editBtn.className = 'card-edit';
+    editBtn.className = 'card-action card-edit';
     editBtn.title = '编辑标题 / 备注';
     editBtn.appendChild(iconSvg('pencil'));
     editBtn.addEventListener('click', (e) => {
@@ -850,7 +851,7 @@
     li.appendChild(editBtn);
 
     const delBtn = document.createElement('button');
-    delBtn.className = 'card-delete';
+    delBtn.className = 'card-action card-delete';
     delBtn.title = '删除卡片';
     delBtn.appendChild(iconSvg('trash'));
     delBtn.addEventListener('click', (e) => {
