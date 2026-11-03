@@ -182,6 +182,22 @@ html, body {
 }
 .group-item:hover { background: var(--bg-hover); }
 .group-item.active { background: var(--bg-hover); font-weight: 600; }
+.group-item.drop-target {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 2px var(--primary);
+  cursor: copy;
+}
+.group-item.drop-invalid {
+  box-shadow: inset 0 0 0 2px var(--danger);
+  cursor: not-allowed;
+}
+.groups-head.drag-invalid,
+.group-list.drag-invalid,
+.groups-panel.drag-invalid {
+  outline: 1px dashed var(--danger);
+  outline-offset: -2px;
+  cursor: not-allowed;
+}
 .group-section-label {
   padding: 10px 10px 4px;
   font-size: 11px;
@@ -216,6 +232,12 @@ html, body {
 }
 .group-head {
   display: flex; flex-direction: column; gap: 4px;
+}
+.group-head.drop-target {
+  outline: 1px dashed var(--primary);
+  outline-offset: 4px;
+  border-radius: var(--radius);
+  cursor: copy;
 }
 .group-title-row {
   display: flex; align-items: center; gap: 10px;
@@ -275,6 +297,11 @@ html, body {
   overflow-y: auto; flex: 1;
   display: flex; flex-direction: column; gap: 8px;
 }
+.card-list.drag-invalid {
+  outline: 1px dashed var(--danger);
+  outline-offset: -2px;
+  cursor: not-allowed;
+}
 .card {
   display: flex; gap: 10px;
   padding: 10px 12px;
@@ -286,7 +313,11 @@ html, body {
   position: relative;
 }
 .card:hover { border-color: var(--primary); box-shadow: var(--shadow); }
-.card.dragging { opacity: .5; }
+.card.dragging {
+  opacity: .45;
+  outline: 1px dashed var(--primary);
+  outline-offset: -2px;
+}
 .card.drag-over { border-color: var(--primary); border-style: dashed; }
 .card-favicon {
   width: 28px; height: 28px; border-radius: 6px;

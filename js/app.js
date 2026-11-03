@@ -13,7 +13,10 @@
     aiBackupKey: null,
     aiAbort: null,
     aiRunId: 0,
-    batchCollectDaily: false
+    batchCollectDaily: false,
+    dragCard: null,
+    cardDropId: null,
+    groupDropId: null
   };
 
   // ---- DOM 引用 ----
@@ -40,6 +43,8 @@
     els.btnCollectTabs = $('btn-collect-tabs');
     els.btnCollectClose = $('btn-collect-close');
     els.groupList = $('group-list');
+    els.groupsPanel = document.querySelector('.groups-panel');
+    els.groupsHead = document.querySelector('.groups-head');
     els.groupHead = $('group-head');
     els.groupColorDot = $('group-color-dot');
     els.groupNameInput = $('group-name-input');
@@ -291,6 +296,219 @@
     }
   }
 
+  // ---- 拖拽状态与落点提示 ----
+  function hasInternalDrag() {
+    return !!(state.dragCard && state.dragCard.cardId);
+  }
+
+  function getDraggedCardId(e) {
+    let id = '';
+    try {
+      if (e && e.dataTransfer) {
+        id = e.dataTransfer.getData('text/plain') ||
+          e.dataTransfer.getData('application/x-open-collections-card') || '';
+      }
+    } catch (err) {}
+    return id || (state.dragCard && state.dragCard.cardId) || '';
+  }
+
+  function findCardGroupId(cardId) {
+    if (!state.data || !cardId) return '';
+    for (const g of state.data.groups) {
+      if (g.deleted) continue;
+      if (g.cards.some((c) => !c.deleted && c.id === cardId)) return g.id;
+    }
+    return '';
+  }
+
+  function findGroupRow(groupId) {
+    if (!els.groupList || !groupId) return null;
+    return Array.from(els.groupList.querySelectorAll('.group-item'))
+      .find((n) => n.dataset.id === groupId) || null;
+  }
+
+  function clearCardDropIndicators() {
+    state.cardDropId = null;
+    if (els.cardList) {
+      els.cardList.classList.remove('drag-invalid');
+      els.cardList.querySelectorAll('.card.drag-over').forEach((n) => n.classList.remove('drag-over'));
+    }
+  }
+
+  function clearGroupDropIndicators() {
+    state.groupDropId = null;
+    if (els.groupList) {
+      els.groupList.querySelectorAll('.group-item.drop-target, .group-item.drop-invalid')
+        .forEach((n) => n.classList.remove('drop-target', 'drop-invalid'));
+      els.groupList.classList.remove('drag-invalid');
+    }
+    if (els.groupHead) els.groupHead.classList.remove('drop-target');
+    if (els.groupsHead) els.groupsHead.classList.remove('drag-invalid');
+    if (els.groupsPanel) els.groupsPanel.classList.remove('drag-invalid');
+  }
+
+  function clearDragState() {
+    state.dragCard = null;
+    clearCardDropIndicators();
+    clearGroupDropIndicators();
+    if (els.cardList) {
+      els.cardList.querySelectorAll('.card.dragging').forEach((n) => n.classList.remove('dragging'));
+    }
+  }
+
+  function setGroupDropTarget(groupId) {
+    if (!groupId || state.groupDropId === groupId) return;
+    clearGroupDropIndicators();
+    clearCardDropIndicators();
+    state.groupDropId = groupId;
+    const row = findGroupRow(groupId);
+    if (row) row.classList.add('drop-target');
+  }
+
+  function setGroupDropInvalid(container) {
+    clearGroupDropIndicators();
+    clearCardDropIndicators();
+    const target = container || els.groupList;
+    if (target) target.classList.add('drag-invalid');
+  }
+
+  function setCardDropTarget(cardEl, cardId) {
+    if (state.cardDropId === cardId) return;
+    clearCardDropIndicators();
+    clearGroupDropIndicators();
+    state.cardDropId = cardId;
+    if (cardEl) cardEl.classList.add('drag-over');
+  }
+
+  function setCardListInvalid() {
+    clearCardDropIndicators();
+    clearGroupDropIndicators();
+    if (els.cardList) els.cardList.classList.add('drag-invalid');
+  }
+
+  async function moveDraggedCardToGroup(targetGroupId, cardId, fromGroupId) {
+    const drag = state.dragCard;
+    const cid = cardId || (drag && drag.cardId) || '';
+    const fid = fromGroupId || (drag && drag.groupId) || findCardGroupId(cid);
+    const target = state.data && state.data.groups.find((g) => g.id === targetGroupId && !g.deleted);
+    clearDragState();
+    if (!cid || !fid || !targetGroupId) {
+      toast('无法识别拖拽的卡片', 'error');
+      return;
+    }
+    try {
+      const res = await Storage.moveCardToGroup(fid, cid, targetGroupId);
+      toast(res.sameGroup
+        ? `已移到「${target ? target.name : '该分组'}」末尾`
+        : `已移动到「${target ? target.name : '目标分组'}」`, 'success');
+      await loadAndRender();
+    } catch (e) {
+      toast('移动失败：' + (e.message || e), 'error');
+    }
+  }
+
+  function bindGroupDropTargets() {
+    const panel = els.groupsPanel;
+    if (panel) {
+      panel.addEventListener('dragover', (e) => {
+        if (!hasInternalDrag()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const row = e.target.closest('.group-item');
+        if (row && els.groupList && els.groupList.contains(row) && row.dataset.id) {
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+          setGroupDropTarget(row.dataset.id);
+          return;
+        }
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+        const container = e.target.closest('.groups-head') ||
+          e.target.closest('.group-list') || panel;
+        setGroupDropInvalid(container);
+      });
+
+      panel.addEventListener('dragleave', (e) => {
+        if (!hasInternalDrag()) return;
+        if (e.relatedTarget && panel.contains(e.relatedTarget)) return;
+        clearGroupDropIndicators();
+      });
+
+      panel.addEventListener('drop', (e) => {
+        if (!hasInternalDrag()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const row = e.target.closest('.group-item');
+        if (!row || !els.groupList || !els.groupList.contains(row) || !row.dataset.id) {
+          clearDragState();
+          toast('请把卡片放到具体分组上', 'error');
+          return;
+        }
+        const drag = state.dragCard;
+        const cardId = getDraggedCardId(e) || (drag && drag.cardId);
+        const fromGroupId = (drag && drag.groupId) || findCardGroupId(cardId);
+        moveDraggedCardToGroup(row.dataset.id, cardId, fromGroupId);
+      });
+    }
+
+    if (els.groupHead) {
+      els.groupHead.addEventListener('dragover', (e) => {
+        if (!hasInternalDrag()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        if (els.groupHead.classList.contains('drop-target')) return;
+        clearGroupDropIndicators();
+        clearCardDropIndicators();
+        els.groupHead.classList.add('drop-target');
+      });
+
+      els.groupHead.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget && els.groupHead.contains(e.relatedTarget)) return;
+        els.groupHead.classList.remove('drop-target');
+      });
+
+      els.groupHead.addEventListener('drop', (e) => {
+        if (!hasInternalDrag()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const active = getActiveGroup();
+        if (!active) {
+          clearDragState();
+          return;
+        }
+        const drag = state.dragCard;
+        const cardId = getDraggedCardId(e) || (drag && drag.cardId);
+        const fromGroupId = (drag && drag.groupId) || findCardGroupId(cardId);
+        moveDraggedCardToGroup(active.id, cardId, fromGroupId);
+      });
+    }
+
+    if (els.cardList) {
+      els.cardList.addEventListener('dragover', (e) => {
+        if (!hasInternalDrag()) return;
+        if (e.target.closest('.card')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+        setCardListInvalid();
+      });
+
+      els.cardList.addEventListener('dragleave', (e) => {
+        if (!hasInternalDrag()) return;
+        if (e.relatedTarget && els.cardList.contains(e.relatedTarget)) return;
+        els.cardList.classList.remove('drag-invalid');
+      });
+
+      els.cardList.addEventListener('drop', (e) => {
+        if (!hasInternalDrag()) return;
+        if (e.target.closest('.card')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearDragState();
+        toast('请把卡片放到具体分组或另一张卡片上', 'error');
+      });
+    }
+  }
+
   function renderCard(c, group, searching) {
     const li = document.createElement('li');
     li.className = 'card';
@@ -397,30 +615,56 @@
       openCardLink(c);
     });
 
-    // 拖拽排序（仅当前分组、非搜索状态）。
+    // 拖拽：卡内排序 + 拖到左侧分组/当前分组标题实现跨组移动。
     if (!searching) {
       li.addEventListener('dragstart', (e) => {
+        clearDragState();
+        state.dragCard = { cardId: c.id, groupId: group.id };
         li.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', c.id);
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          try { e.dataTransfer.setData('text/plain', c.id); } catch (err) {}
+          try { e.dataTransfer.setData('application/x-open-collections-card', c.id); } catch (err) {}
+        }
       });
+
       li.addEventListener('dragend', () => {
-        li.classList.remove('dragging');
-        document.querySelectorAll('.card.drag-over').forEach((n) => n.classList.remove('drag-over'));
+        clearDragState();
       });
+
       li.addEventListener('dragover', (e) => {
+        if (!hasInternalDrag()) return;
         e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        document.querySelectorAll('.card.drag-over').forEach((n) => n.classList.remove('drag-over'));
-        li.classList.add('drag-over');
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        setCardDropTarget(li, c.id);
       });
-      li.addEventListener('dragleave', () => li.classList.remove('drag-over'));
+
+      li.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget && li.contains(e.relatedTarget)) return;
+        if (state.cardDropId === c.id) {
+          li.classList.remove('drag-over');
+          state.cardDropId = null;
+        }
+      });
+
       li.addEventListener('drop', async (e) => {
+        if (!hasInternalDrag()) return;
         e.preventDefault();
-        li.classList.remove('drag-over');
-        const draggedId = e.dataTransfer.getData('text/plain');
-        if (!draggedId || draggedId === c.id) return;
+        e.stopPropagation();
+        const draggedId = getDraggedCardId(e);
+        const drag = state.dragCard;
+        if (!draggedId || draggedId === c.id) {
+          clearDragState();
+          return;
+        }
+        if (drag && drag.groupId && drag.groupId !== group.id) {
+          await moveDraggedCardToGroup(group.id);
+          return;
+        }
+        clearCardDropIndicators();
         await reorderCards(group.id, draggedId, c.id);
+        clearDragState();
       });
     }
 
@@ -437,7 +681,7 @@
   }
 
   async function reorderCards(groupId, draggedId, targetId) {
-    const g = getActiveGroup();
+    const g = state.data && state.data.groups.find((x) => x.id === groupId && !x.deleted);
     if (!g) return;
     const alive = g.cards.filter((c) => !c.deleted);
     const ids = alive.map((c) => c.id);
@@ -1323,6 +1567,9 @@
     $('btn-open-all').addEventListener('click', openAllInGroup);
     els.groupNameInput.addEventListener('change', renameGroupFromInput);
     els.groupNameInput.addEventListener('blur', renameGroupFromInput);
+
+    // 左侧分组列表与当前分组标题作为跨组拖拽落点。
+    bindGroupDropTargets();
 
     $('btn-add-page').addEventListener('click', addCurrentPage);
     els.btnAddMenu.addEventListener('click', (e) => {

@@ -283,6 +283,40 @@
     return cards[0];
   };
 
+  // 拖拽移动：同组移到末尾；跨组复制到目标组末尾并在源组打墓碑，保证同步不复活。
+  Storage.moveCardToGroup = async function (fromGroupId, cardId, toGroupId) {
+    if (!fromGroupId || !cardId || !toGroupId) throw new Error('移动参数不完整');
+    return Storage.mutate((data) => {
+      const from = data.groups.find((g) => g.id === fromGroupId && !g.deleted);
+      if (!from) throw new Error('原分组不存在');
+      const card = from.cards.find((c) => c.id === cardId && !c.deleted);
+      if (!card) throw new Error('卡片不存在');
+      const to = data.groups.find((g) => g.id === toGroupId && !g.deleted);
+      if (!to) throw new Error('目标分组不存在');
+
+      const now = Utils.now();
+      if (from.id === to.id) {
+        from.cards = from.cards.filter((c) => c !== card).concat([card]);
+        card.updatedAt = now;
+        from.updatedAt = now;
+        return { sameGroup: true, cardId: card.id, sourceGroupId: from.id, targetGroupId: to.id };
+      }
+
+      const copy = Utils.clone(card);
+      copy.id = Utils.uuid();
+      copy.addedAt = card.addedAt;
+      copy.updatedAt = now;
+      to.cards.push(copy);
+
+      card.deleted = true;
+      card.deletedAt = now;
+      card.updatedAt = now;
+      from.updatedAt = now;
+      to.updatedAt = now;
+      return { sameGroup: false, cardId: copy.id, sourceGroupId: from.id, targetGroupId: to.id };
+    });
+  };
+
   // ---- 每日标签页（OneTab 模式）----
   Storage.isDailyGroup = function (group) {
     return !!(group && typeof group.id === 'string' &&
