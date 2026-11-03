@@ -67,7 +67,7 @@ Open Collections 是一个本地网页收藏夹，用来替代已下线的 Micro
 · 单击卡片直接打开原链接；悬停可快速编辑（✎）或删除（🗑）
 · 「全部打开」一键在新标签页打开本组所有链接
 · 可选 AI 整理：自带 OpenAI 兼容接口，预览建议分组后再应用，支持撤销
-· 独立窗口（480×720）与侧边栏共用同一份数据，适合大屏整理
+· 独立窗口（默认 1200×850，可调整并记住）与侧边栏共用同一份数据，适合大屏整理
 
 【数据与同步】
 · 全部数据保存在浏览器本地（chrome.storage.local），不上传
@@ -82,7 +82,7 @@ Open Collections 是一个本地网页收藏夹，用来替代已下线的 Micro
 · 端点仅接受 https；WebDAV 凭据与 AI API Key 经主密码加密后只保存在本机，仅发送给你自己填写的服务器或接口
 
 【快捷键】
-Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开侧边栏
+Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开侧边栏（建议键位，实际以浏览器快捷键设置为准）
 （可在 edge://extensions/shortcuts 中修改）
 
 适合需要「稍后读」、整理资料、收集设计灵感与开发文档的用户。纯本地、无构建、开源可审查。
@@ -94,7 +94,7 @@ Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打
 Open Collections is a local bookmark manager that replaces Microsoft Edge's retired Collections feature. Save pages and selected text into groups, search everything, open a whole group at once, and back up or sync across devices.
 
 • Groups: create, rename, delete, 10 colors, per-group item count, drag to reorder cards.
-• Save pages with one click (Ctrl+Shift+S); save selected text as an excerpt with its source (Ctrl+Shift+E).
+• Save pages with one click (default shortcut Ctrl+Shift+S); save selected text as an excerpt with its source (default shortcut Ctrl+Shift+E). Shortcuts are suggestions and can be changed in the browser.
 • Batch collect: pull every web tab in the current window into the active group, optionally closing them afterwards (pinned tabs are skipped) and leaving one fresh tab behind.
 • Optional OneTab mode: batch collections go into a date-named daily group, with multiple collections on the same day appended together.
 • Search across all groups by title, URL, notes and excerpt text.

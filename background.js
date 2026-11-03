@@ -114,7 +114,7 @@ async function saveSelection(options) {
   } catch (e) {
     const raw = e && e.message ? e.message : String(e);
     if (/Cannot access|must request permission|Missing host permission/i.test(raw)) {
-      throw new Error('无法读取选区：页面访问权限不足。请再次点击「摘录」并允许访问网页，或使用快捷键 Ctrl+Shift+E');
+      throw new Error('无法读取选区：页面访问权限不足。请再次点击「摘录」并允许访问网页');
     }
     throw new Error('无法读取选区：' + raw);
   }
@@ -189,14 +189,16 @@ async function openSidePanel(tab) {
 }
 
 // ---- 独立管理窗口：尺寸策略只在这一处，所有入口（命令/消息/图标降级）共用 ----
-// 默认 1100×800；上限为屏幕可用区域的 90%（Service Worker 无 screen 对象，
-// 由 management 页面上报），极小屏时 90% 优先于最小尺寸，保证窗口完整落在屏幕内。
+// 默认 1200×850；上限为屏幕可用区域的 92%（Service Worker 无 screen 对象，
+// 由 management 页面上报），极小屏时 92% 优先于最小宽度，保证窗口完整落在屏幕内。
 // 用户手动调整后的尺寸经防抖持久化，下次沿用；脏数据（非数字/越界）回退默认。
-// Chromium 的 windows.create 不支持窗口级 minWidth，900px 下限用于尺寸校验；
-// 更窄的窗口靠响应式布局降级（分组栏收窄/折叠），不出现横向滚动。
-const MANAGEMENT_WINDOW_DEFAULT = { width: 1100, height: 800 };
-const MANAGEMENT_WINDOW_MIN = { width: 900, height: 600 };
+// bounds 带 schema 版本：升级时旧结构（含历史小尺寸）整体失效一次，避免重开仍是小窗。
+// Chromium 的 windows.create 不支持窗口级 minWidth，960px 下限用于尺寸校验；
+// 独立窗口页面（?standalone=1）另有 CSS min-width 兜底，分组栏任何宽度都不会自动消失。
+const MANAGEMENT_WINDOW_DEFAULT = { width: 1200, height: 850 };
+const MANAGEMENT_WINDOW_MIN = { width: 960, height: 600 };
 const MANAGEMENT_WINDOW_MAX = { width: 4000, height: 2400 };
+const WINDOW_BOUNDS_SCHEMA_VERSION = 2;
 const BOUNDS_SAVE_DEBOUNCE_MS = 600;
 
 function normalizeWindowSize(width, height) {
@@ -214,11 +216,11 @@ function normalizeWindowSize(width, height) {
 
 function fitSizeToScreen(size, screenInfo) {
   if (!screenInfo || !(Number(screenInfo.w) > 0) || !(Number(screenInfo.h) > 0)) return size;
-  const capW = Math.floor(Number(screenInfo.w) * 0.9);
-  const capH = Math.floor(Number(screenInfo.h) * 0.9);
+  const capW = Math.floor(Number(screenInfo.w) * 0.92);
+  const capH = Math.floor(Number(screenInfo.h) * 0.92);
   let width = Math.min(size.width, capW);
   let height = Math.min(size.height, capH);
-  // 极小屏：90% 可用区域优先于最小尺寸，宁可窄于 900 也不超出屏幕。
+  // 极小屏：92% 可用区域优先于最小宽度，宁可窄于 960 也不超出屏幕。
   width = Math.max(width, Math.min(MANAGEMENT_WINDOW_MIN.width, capW));
   height = Math.max(height, Math.min(MANAGEMENT_WINDOW_MIN.height, capH));
   return { width, height };
@@ -228,7 +230,8 @@ async function managementWindowSize() {
   let size = Object.assign({}, MANAGEMENT_WINDOW_DEFAULT);
   try {
     const bounds = await Storage.loadWindowBounds();
-    if (bounds) {
+    // schema 迁移：旧版本结构（无 v 标记）一次性失效，防止历史小尺寸残留。
+    if (bounds && bounds.v === WINDOW_BOUNDS_SCHEMA_VERSION) {
       const normalized = normalizeWindowSize(bounds.width, bounds.height);
       // 仅当存储值通过校验（未触发回退）时才采用，脏数据走默认值。
       if (bounds.width != null && normalized.width === Math.round(Number(bounds.width))) {
@@ -251,7 +254,8 @@ async function openManagementWindow() {
   let win = null;
   try {
     win = await chrome.windows.create({
-      url: chrome.runtime.getURL(MANAGEMENT_PAGE),
+      // standalone=1：页面据此启用窗口专属布局兜底（CSS min-width 等），侧边栏不受影响。
+      url: chrome.runtime.getURL(MANAGEMENT_PAGE) + '?standalone=1',
       type: 'popup',
       width: size.width,
       height: size.height
@@ -263,6 +267,7 @@ async function openManagementWindow() {
   }
   if (win && win.id != null) {
     await Storage.saveWindowBounds({
+      v: WINDOW_BOUNDS_SCHEMA_VERSION,
       windowId: win.id,
       width: size.width,
       height: size.height
@@ -279,6 +284,7 @@ chrome.windows.onBoundsChanged.addListener((win) => {
     clearTimeout(boundsSaveTimer);
     boundsSaveTimer = setTimeout(() => {
       Storage.saveWindowBounds({
+        v: WINDOW_BOUNDS_SCHEMA_VERSION,
         windowId: win.id,
         width: win.width,
         height: win.height

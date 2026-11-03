@@ -61,7 +61,7 @@ Open Collections is a local-first web page collection and organization tool that
 - To test AI without a real provider: open Settings → enable AI, enter a harmless https endpoint (or skip testing). The "AI Organize" button requires a configured endpoint, model, and API key; without them it only opens Settings.
 - To test WebDAV without a server: the sync buttons are disabled until cloud sync is enabled; enabling requires confirmation, then requests go only to the entered https URL.
 - Credentials require a master password (Settings → Master password). Set one, then enter WebDAV/AI credentials; they are encrypted at rest. Wrong master passwords are rejected; manual lock and idle auto-lock stop requests.
-- Excerpt testing: select text on any http/https page, click the quote button or press Ctrl+Shift+E, and grant the requested host permission when prompted.
+- Excerpt testing: select text on any http/https page, click the quote button or press the excerpt shortcut (suggested default Ctrl+Shift+E, see the browser shortcuts page), and grant the requested host permission when prompted.
 - Batch collect testing: open several normal http/https tabs in one window, use the add menu → "Collect this window's tabs" (does not close tabs) or "Collect and close tabs".
 - No remote code, no eval/new Function, no analytics, no ads. All scripts are packaged.
 - Permission prompts are runtime optional host permissions and are limited to the origin being used.

@@ -35,6 +35,39 @@
     groupDropId: null
   };
 
+  // ---- 命令文案唯一来源（COMMAND_META）----
+  // manifest commands 的 id、可读显示名与说明都在这里维护；设置页快捷键区与空状态
+  // 提示共用这一份，避免各处手写。键位本身绝不写死，运行时从 chrome.commands.getAll()
+  // 读取（见 refreshCommandBindings）；读不到时统一提示「可在设置中查看快捷键」。
+  // 注意：_execute_action 的 id 是 Chromium 内置保留 id，不能改成自定义 id 冒充。
+  const COMMAND_META = {
+    '_execute_action': {
+      name: '点击工具栏图标',
+      desc: '打开 Open Collections（等同点击工具栏图标）',
+      builtin: true
+    },
+    'add-current-page': {
+      name: '保存当前页面',
+      desc: '把当前页面加入当前分组'
+    },
+    'save-selection': {
+      name: '保存摘录',
+      desc: '把选中的文字存为摘录卡片'
+    },
+    'toggle-side-panel': {
+      name: '打开侧边栏',
+      desc: '在当前窗口打开侧边栏（Chromium 无关闭 API，只能手动关闭）'
+    },
+    'open-management-window': {
+      name: '打开独立管理窗口',
+      desc: '在新窗口打开管理界面'
+    }
+  };
+
+  // 当前键位绑定（id → shortcut）；focus/可见性恢复时刷新，不使用过期缓存渲染。
+  let commandBindings = {};
+  let commandBindingsReady = false;
+
   // ---- DOM 引用 ----
   const $ = (id) => document.getElementById(id);
   const els = {};
@@ -143,7 +176,8 @@
   }
 
   // ---- 分组栏折叠 ----
-  // 窄屏（侧边栏）默认折叠，宽屏默认展开；手动切换在跨越断点前保持。
+  // 分组栏任何宽度下默认展开，绝不因视口宽度自动隐藏（历史缺陷：窄窗口被 display:none 整块消失）。
+  // 只有用户点顶栏按钮才折叠，随时可再展开；≤520px 视口时展开态以浮层呈现，选中分组后自动收起浮层。
   const NARROW_QUERY = window.matchMedia('(max-width: 520px)');
 
   function setGroupsFolded(folded) {
@@ -206,7 +240,7 @@
       state.data.activeGroupId = g.id;
       await Storage.setActiveGroup(g.id);
       render();
-      // 窄屏下分组栏是浮层，选中后自动收起。
+      // 仅窄屏浮层模式下，选中分组后收起浮层（浮层会遮挡内容）；非浮层布局保持展开。
       if (NARROW_QUERY.matches) setGroupsFolded(true);
     });
     els.groupList.appendChild(li);
@@ -273,10 +307,68 @@
         els.emptyDesc.textContent = '批量收藏会按日期收进这里；之后可用「AI 整理」归入主题集锦。';
       } else {
         els.emptyTitle.textContent = '这个分组还没有内容';
-        els.emptyDesc.textContent = '点击顶部「添加当前页面」，或按 Ctrl+Shift+S 收藏当前网页；选中文字后按 Ctrl+Shift+E 保存摘录。';
+        // 快捷键实时读取当前绑定；未设置时不显示假键位，读不到时引导到设置页。
+        els.emptyDesc.textContent = buildEmptyShortcutHint();
       }
       els.emptyAction.classList.add('hidden');
     }
+  }
+
+  // 空状态快捷键提示：键位来自 chrome.commands.getAll()，不写死、不猜测。
+  function buildEmptyShortcutHint() {
+    if (!commandBindingsReady) {
+      return '点击顶部「添加当前页面」把网页收藏进来；选中文字后可保存摘录。快捷键可在设置中查看。';
+    }
+    return '点击顶部「添加当前页面」，或使用快捷键' + shortcutHint('add-current-page') +
+      '；选中文字后按保存摘录快捷键' + shortcutHint('save-selection') + '可存为摘录。';
+  }
+
+  function shortcutHint(id) {
+    const shortcut = commandBindings[id];
+    return '（当前为 ' + (shortcut || '未设置') + '）';
+  }
+
+  // 把当前绑定应用到空状态与按钮 tooltip；设置页列表由 refreshShortcuts 单独渲染。
+  function applyCommandShortcutsToUi() {
+    if (state.data) updateEmptyState(state.search.trim().toLowerCase());
+    const addBtn = $('btn-add-page');
+    if (addBtn) {
+      const base = '将当前页面加入当前分组';
+      addBtn.title = commandBindingsReady
+        ? base + '（当前为 ' + (commandBindings['add-current-page'] || '未设置') + '）'
+        : base;
+    }
+    const selBtn = $('btn-save-sel');
+    if (selBtn) {
+      const base = '保存选中文字为摘录';
+      selBtn.title = commandBindingsReady
+        ? base + '（当前为 ' + (commandBindings['save-selection'] || '未设置') + '）'
+        : base;
+    }
+  }
+
+  function refreshCommandBindings() {
+    return new Promise((resolve) => {
+      if (!chrome.commands || typeof chrome.commands.getAll !== 'function') {
+        commandBindings = {};
+        commandBindingsReady = false;
+        applyCommandShortcutsToUi();
+        resolve();
+        return;
+      }
+      chrome.commands.getAll((commands) => {
+        if (chrome.runtime.lastError) {
+          commandBindings = {};
+          commandBindingsReady = false;
+        } else {
+          commandBindings = {};
+          (commands || []).forEach((c) => { commandBindings[c.name] = c.shortcut || ''; });
+          commandBindingsReady = true;
+        }
+        applyCommandShortcutsToUi();
+        resolve();
+      });
+    });
   }
 
   function renderCards() {
@@ -1043,7 +1135,7 @@
   async function saveSelection() {
     const granted = await requestPageAccess();
     if (!granted) {
-      toast('未获得页面访问权限。可在扩展详情中开启站点访问权限，或在网页上按 Ctrl+Shift+E', 'error');
+      toast('未获得页面访问权限。可在扩展详情中开启站点访问权限后重试', 'error');
       return;
     }
     try {
@@ -1313,9 +1405,10 @@
       toast('无法打开浏览器快捷键页面，请手动访问 ' + url, 'error');
       return;
     }
-    const label = command && command.name ? `「${command.name}」` : '';
-    const desc = command && command.description ? `（${command.description}）` : '';
-    toast(`请在打开的快捷键页面中找到 Open Collections 的${label}${desc} 项进行修改`, 'info');
+    // 提示里同时给可读名与命令 id：浏览器快捷键页显示的可能是任一形式。
+    const meta = COMMAND_META[command.name];
+    const label = meta ? `「${meta.name}」（${command.name}）` : `「${command.name}」`;
+    toast(`请在打开的快捷键页面中找到 Open Collections 的${label}进行修改`, 'info');
   }
 
   function refreshShortcuts() {
@@ -1354,21 +1447,24 @@
         row.className = 'shortcut-row';
         row.dataset.command = c.name || '';
 
+        const meta = COMMAND_META[c.name];
         const info = document.createElement('div');
         info.className = 'shortcut-info';
         const name = document.createElement('span');
         name.className = 'shortcut-name';
-        name.textContent = c.name || '未命名命令';
+        // 主标题用可读名；下划线 id 只放在 tooltip 次要位置。
+        name.textContent = meta ? meta.name : (c.name || '未命名命令');
+        name.title = c.name || '';
         const desc = document.createElement('span');
         desc.className = 'shortcut-desc';
-        desc.textContent = c.description || '（无说明）';
+        desc.textContent = meta ? meta.desc : (c.description || '（无说明）');
         info.appendChild(name);
         info.appendChild(desc);
         // 事实判断：Chromium 对 _execute_action 的说明来源不稳定——可能显示固定文案
         //（如「打开扩展程序」）、扩展名或 action.default_title，manifest 里的自定义
         // description 不一定被采用，实际显示以浏览器为准。不要为了「好看」改用自定义
         // 命令 id 冒充内置命令：只有 _execute_action 能把快捷键绑定到「点击工具栏图标」。
-        if (c.name === '_execute_action') {
+        if (meta && meta.builtin) {
           const note = document.createElement('span');
           note.className = 'shortcut-desc';
           note.textContent = '系统内置命令，等同点击工具栏图标';
@@ -2466,7 +2562,6 @@
   function bindEvents() {
     els.btnToggleGroups.addEventListener('click', toggleGroups);
     els.groupsBackdrop.addEventListener('click', () => setGroupsFolded(true));
-    NARROW_QUERY.addEventListener('change', (e) => setGroupsFolded(e.matches));
 
     $('btn-new-group').addEventListener('click', createGroup);
     els.emptyAction.addEventListener('click', createGroup);
@@ -2538,9 +2633,15 @@
     $('btn-security-clear').addEventListener('click', clearMasterPassword);
     $('security-auto-lock').addEventListener('change', updateAutoLockSetting);
     $('btn-shortcuts-refresh').addEventListener('click', refreshShortcuts);
-    window.addEventListener('focus', refreshShortcuts);
+    // 绑定可能被用户在浏览器快捷键页修改：窗口获得焦点/重新可见时全部刷新，
+    // 不渲染过期键位。
+    const refreshCommandUi = () => {
+      refreshShortcuts();
+      refreshCommandBindings();
+    };
+    window.addEventListener('focus', refreshCommandUi);
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) refreshShortcuts();
+      if (!document.hidden) refreshCommandUi();
     });
     $('btn-consent-confirm').addEventListener('click', confirmConsent);
     $('btn-consent-cancel').addEventListener('click', closeConsent);
@@ -2685,10 +2786,16 @@
       about.textContent = 'Open Collections v' + chrome.runtime.getManifest().version +
         ' · 本地集锦管理。数据存放于浏览器 chrome.storage.local。';
     }
-    setGroupsFolded(NARROW_QUERY.matches);
+    // 分组栏默认展开：不再按视口宽度自动折叠（历史缺陷会整块隐藏分组栏）。
+    setGroupsFolded(false);
+    // 独立窗口入口带 standalone=1：启用窗口专属布局兜底（CSS min-width 等），侧边栏不受影响。
+    if (/[?&]standalone=1/.test(location.search)) {
+      document.body.classList.add('standalone-window');
+    }
     bindEvents();
     reportScreenInfo();
     window.addEventListener('resize', Utils.debounce(reportScreenInfo, 300));
+    refreshCommandBindings();
     if (els.onboardingBanner) {
       Storage.loadOnboarding()
         .then((dismissed) => els.onboardingBanner.classList.toggle('hidden', dismissed))

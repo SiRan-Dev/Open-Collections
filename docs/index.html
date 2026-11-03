@@ -94,7 +94,7 @@
   <h2>3. 网络访问</h2>
   <ul>
     <li><strong>站点图标</strong>：通过浏览器内置的 <code>_favicon</code> 接口读取，不向站点或第三方发起额外请求。</li>
-    <li><strong>摘录</strong>：只在你点击「摘录」或按 Ctrl+Shift+E 时，读取当前页面中你选中的文字；不会读取页面其他内容。</li>
+    <li><strong>摘录</strong>：只在你点击「摘录」或使用摘录快捷键（默认 Ctrl+Shift+E）时，读取当前页面中你选中的文字；不会读取页面其他内容。</li>
     <li><strong>WebDAV 同步</strong>：只在你点击「测试连接」「立即同步」「仅上传」「仅下载」，或你主动开启「定时自动同步」后，向<strong>你自己填写的</strong> WebDAV 服务器发起请求。数据与凭据只会发送到该服务器。</li>
     <li><strong>AI 整理</strong>：只有你在设置中启用 AI 整理并点击「AI 整理」或「测试连接」时，才会向<strong>你自己填写的</strong> OpenAI 兼容接口发送当前整理范围的分组/集锦名称、卡片标题（最多 80 字）、域名、笔记（最多 60 字）与摘录片段（最多 100 字），以及用于认证的 API Key。开发者不会收到这些数据；请自行确认该接口运营方的隐私与数据处理政策。</li>
     <li>除上述情况外，本扩展不发起任何网络请求。</li>
@@ -156,7 +156,7 @@
   <h3>3. Network access</h3>
   <ul>
     <li><strong>Site icons</strong> are read through the browser's built-in <code>_favicon</code> interface; no extra requests are made.</li>
-    <li><strong>Excerpts</strong> read the text you selected on the current page only when you click "Excerpt" or press Ctrl+Shift+E.</li>
+    <li><strong>Excerpts</strong> read the text you selected on the current page only when you click "Excerpt" or use the excerpt shortcut (default Ctrl+Shift+E).</li>
     <li><strong>WebDAV sync</strong> is disabled by default. After you enable it and confirm the first-use notice, it contacts only the https server you configure, and only when you click test/sync/upload/download or enable scheduled sync. Disabling it stops scheduled jobs and cancels an in-progress sync.</li>
     <li><strong>AI organization</strong> is disabled by default. After you enable it and confirm the first-use notice, it contacts only the https OpenAI-compatible endpoint you configure, and only when you click "AI Organize" or "Test connection". It sends the current group names, card titles (up to 80 characters), domains, notes (up to 60 characters), excerpt snippets (up to 100 characters), and the API key used for authentication. The developer receives none of this data; check the privacy practices of your AI provider.</li>
     <li>No other network requests are made. Plain http endpoints are rejected when saving and when making requests.</li>

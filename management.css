@@ -40,6 +40,12 @@ html, body {
 
 .hidden { display: none !important; }
 
+/* 独立窗口专属：内容最小宽度兜底（Chromium 无窗口级 minWidth）。
+   窗口被拖到 960px 以下时出现横向滚动而不是布局崩坏；侧边栏不加此限制。 */
+body.standalone-window {
+  min-width: 960px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
