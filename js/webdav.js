@@ -356,6 +356,7 @@
     let settingsChanged = 0;
     let cacheMergedCount = null;
     let backupsImported = 0;
+    let skippedUncollectable = 0;
 
     if (mode === 'upload') {
       // 强制上传：本地全部标记为最新，让本地在这次同步中胜出。
@@ -399,7 +400,9 @@
         cacheMergedCount = Object.keys(mergedCache).length;
       }
       saved = await Storage.mutate((data) => {
-        const merged = Storage.mergeRemote(data, remoteCollections ? remoteCollections.data : null);
+        const mergeStats = {};
+        const merged = Storage.mergeRemote(data, remoteCollections ? remoteCollections.data : null, mergeStats);
+        skippedUncollectable = mergeStats.skippedUncollectable || 0;
         data.groups = merged.groups;
         data.activeGroupId = merged.activeGroupId;
         if (merged.version != null) data.version = merged.version;
@@ -476,6 +479,7 @@
       stats,
       settingsChanged,
       aiCacheCount: cacheMergedCount,
+      uncollectableSkipped: skippedUncollectable,
       backupsImported
     };
   };

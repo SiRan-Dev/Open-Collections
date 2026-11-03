@@ -307,12 +307,23 @@
   };
 
   // ---- 卡片操作 ----
+  function notCollectableError(url) {
+    const err = new Error(Utils.URL_NOT_COLLECTABLE_MESSAGE);
+    err.code = 'URL_NOT_COLLECTABLE';
+    err.url = typeof url === 'string' ? url : '';
+    return err;
+  }
+
   function cardFromInput(cardInput) {
+    const url = cardInput && typeof cardInput.url === 'string' ? cardInput.url : '';
+    // 唯一写入口守卫：任何采集调用方（收藏、批量、摘录、拖拽、AI 应用）都必须经过这里，
+    // 非 http/https 直接抛错，且整批不产生任何写入。
+    if (!Utils.isCollectableUrl(url)) throw notCollectableError(url);
     return normalizeCard({
       id: Utils.uuid(),
       type: cardInput.type || 'page',
       title: cardInput.title || '无标题',
-      url: cardInput.url || '',
+      url,
       favicon: cardInput.favicon || '',
       notes: cardInput.notes || '',
       excerpt: cardInput.excerpt || '',
@@ -575,7 +586,11 @@
           if (typeof id !== 'string' || seen.has(id)) continue;
           seen.add(id);
           const entry = sourceCards.get(id);
-          if (entry) picked.push(entry);
+          if (entry) {
+            // AI 应用同样不能把非 http/https 条目写进目标分组：任一不合法即整次拒绝。
+            if (!Utils.isCollectableUrl(entry.card.url)) throw notCollectableError(entry.card.url);
+            picked.push(entry);
+          }
         }
         if (!picked.length) continue;
 
@@ -653,9 +668,14 @@
       if (!g) throw new Error('分组不存在');
       const c = g.cards.find((x) => x.id === cardId);
       if (!c) throw new Error('卡片不存在');
+      const prevUrl = c.url;
       const allowed = ['title', 'notes', 'favicon', 'url', 'excerpt'];
       for (const k of allowed) {
         if (k in patch) c[k] = typeof patch[k] === 'string' ? patch[k] : c[k];
+      }
+      // 编辑只允许把链接改成 http/https；历史遗留的非网页卡片仍可改标题/笔记（URL 未变时不拦）。
+      if (typeof patch.url === 'string' && patch.url !== prevUrl && !Utils.isCollectableUrl(patch.url)) {
+        throw notCollectableError(patch.url);
       }
       c.updatedAt = Utils.now();
       g.updatedAt = Utils.now();
@@ -1402,9 +1422,21 @@
 
   // ---- 同步合并（供 webdav.js 使用）----
   // 把远端数据与本地数据按 lastModified 合并，返回合并结果。
-  Storage.mergeRemote = function (localData, remoteData) {
+  Storage.mergeRemote = function (localData, remoteData, stats) {
     const local = normalize(localData || Utils.clone(DEFAULT_DATA));
     const remote = normalize(remoteData || Utils.clone(DEFAULT_DATA));
+
+    // 远端合并同样只接受 http/https：file:/浏览器内部页等历史条目直接丢弃，
+    // 既不新写入本机，也不参与分组复活或覆盖本地同 id 卡片。数量写入 stats 供同步提示。
+    let skippedUncollectable = 0;
+    for (const rg of remote.groups) {
+      rg.cards = rg.cards.filter((c) => {
+        if (Utils.isCollectableUrl(c.url)) return true;
+        skippedUncollectable++;
+        return false;
+      });
+    }
+    if (stats) stats.skippedUncollectable = skippedUncollectable;
 
     const result = Utils.clone(local);
     const localGroupMap = new Map(result.groups.map((g) => [g.id, g]));

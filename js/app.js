@@ -701,7 +701,7 @@
       })
       .filter(Boolean);
     if (!urls.length) {
-      toast('只能拖入 http/https 网页链接', 'error');
+      toast(Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
       return;
     }
     const g = getActiveGroup();
@@ -731,7 +731,12 @@
       return;
     }
     const full = inputs.map((i) => Object.assign(i, { pinned: !!pinned }));
-    await Storage.addCards(g.id, full);
+    try {
+      await Storage.addCards(g.id, full);
+    } catch (e) {
+      toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
+      return;
+    }
     toast(`已收进「${g.name}」${urls.length - skippedDup} 个链接${pinned ? '（已固定）' : ''}${skippedDup ? `，跳过 ${skippedDup} 个重复` : ''}`, 'success');
     await loadAndRender();
   }
@@ -985,7 +990,8 @@
       closeDrawer('editor');
       await loadAndRender();
     } catch (e) {
-      toast('保存失败：' + (e.message || e), 'error');
+      if (e.code === 'URL_NOT_COLLECTABLE') toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
+      else toast('保存失败：' + (e.message || e), 'error');
     }
   }
 
@@ -1143,8 +1149,8 @@
   }
 
   function isCollectibleTab(tab) {
-    // 固定标签与浏览器内部页不参与。
-    return !!tab && !tab.pinned && /^https?:/i.test(tab.url || '');
+    // 固定标签不参与；可收藏性统一使用 Utils.isCollectableUrl（仅 http/https）。
+    return !!tab && !tab.pinned && Utils.isCollectableUrl(tab.url);
   }
 
   async function getCollectWindow() {
@@ -1195,7 +1201,15 @@
     if (!oneTabMode && !activeGroup) throw new Error('请先创建一个分组');
 
     const targets = (win.tabs || []).filter(isCollectibleTab);
-    if (!targets.length) throw new Error('该窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
+    // 受限页只跳过、不参与写入；数量用于汇总提示，避免整批失败或静默丢失。
+    const unsupportedCount = (win.tabs || [])
+      .filter((tab) => tab && !tab.pinned && !Utils.isCollectableUrl(tab.url)).length;
+    if (!targets.length) {
+      // 全是不可收藏页面时与其它入口同一句提示；固定标签等纯空窗口保留原说明。
+      throw new Error(unsupportedCount
+        ? Utils.URL_NOT_COLLECTABLE_MESSAGE
+        : '该窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
+    }
 
     let items = targets.map((tab) => ({
       tab,
@@ -1273,16 +1287,17 @@
     }
 
     const skipNote = skippedDuplicates ? `，跳过 ${skippedDuplicates} 个重复链接` : '';
+    const unsupportedNote = unsupportedCount ? `，跳过 ${unsupportedCount} 个不受支持的页面` : '';
     if (closeAfter) {
-      toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}`, 'success');
+      toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}${unsupportedNote}`, 'success');
     } else if (oneTabMode && created) {
-      toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
+      toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}${unsupportedNote}`, 'success');
     } else if (oneTabMode && revived) {
-      toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
+      toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}${unsupportedNote}`, 'success');
     } else if (oneTabMode) {
-      toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}`, 'success');
+      toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
     } else {
-      toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}`, 'success');
+      toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
     }
     await loadAndRender();
   }
@@ -2751,7 +2766,8 @@
       }
       renderAiState('applied');
     } catch (e) {
-      toast('应用失败：' + (e.message || e), 'error');
+      if (e.code === 'URL_NOT_COLLECTABLE') toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
+      else toast('应用失败：' + (e.message || e), 'error');
     } finally {
       $('btn-ai-apply').disabled = false;
       $('btn-ai-cancel').disabled = false;
@@ -2819,6 +2835,7 @@
           `卡片 新增${cs.added}/更新${cs.updated}/删除${cs.deleted}`
         ];
         if (result.settingsChanged) parts.push(`设置 ${result.settingsChanged} 个键`);
+        if (result.uncollectableSkipped) parts.push(`跳过 ${result.uncollectableSkipped} 个不受支持的链接`);
         detail = `（${parts.join('，')}）`;
       } else if (result) {
         detail = `（${result.groups} 个分组）`;
