@@ -46,12 +46,25 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
 // ---- 工具：获取「最近活跃的普通网页标签」----
 // 独立管理窗口/侧边栏自身是扩展页面，不是网页。用户在独立窗口里点「添加当前页面」
 // 或按摘录快捷键时，活动标签是扩展页，取不到目标网页。
-// 因此监听 tabs.onActivated/onUpdated，记录「最近活跃的普通 http/https 标签」，
-// 活动标签不是普通网页时回退使用它（侧边栏场景活动标签通常是网页，不回退，行为不变）。
+// 因此监听 tabs.onActivated/onUpdated，记录「最近活跃的普通 http/https 标签」。
+// 仅当活动标签是扩展自身页面（独立窗口）时回退使用它；侧边栏停在受限页时不回退，改为明确报错。
 const RECENT_TAB_KEY = 'recentWebTab';
 
 function isWebTabUrl(url) {
   return /^https?:/i.test(String(url || ''));
+}
+
+// 是否为扩展自身的页面（侧边栏/独立管理窗口）。只有这种场景才需要回退到「最近网页」；
+// 用户停在 chrome://、其它扩展页等受限页时，应把该页原样返回以便调用方明确报错。
+function isOwnManagementPage(url) {
+  try {
+    const base = typeof chrome.runtime.getURL === 'function'
+      ? chrome.runtime.getURL('')
+      : `chrome-extension://${chrome.runtime.id}/`;
+    return !!url && String(url).indexOf(base) === 0;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function trackWebTab(tab) {
@@ -131,14 +144,19 @@ if (chrome.windows && chrome.windows.onFocusChanged) {
   });
 }
 
-// 活动标签是普通网页时直接用；否则回退到最近活跃网页标签（不再可用时给出可读错误）。
+// 活动标签是普通网页时直接用；扩展自身页面（独立窗口）才回退到最近活跃网页标签。
+// 用户主动停留在受限页时返回该页，由 addCurrentPage / saveSelection 给出明确错误，
+// 避免静默收藏/摘录到另一个网页。
 async function getActiveWebTab() {
   let tab = null;
   try {
     const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     tab = active || null;
   } catch (e) {}
-  if (tab && isWebTabUrl(tab.url)) return tab;
+  if (tab) {
+    if (isWebTabUrl(tab.url)) return tab;
+    if (!isOwnManagementPage(tab.url)) return tab;
+  }
   const recent = await readRecentWebTab();
   if (recent && typeof recent.id === 'number') {
     try {
