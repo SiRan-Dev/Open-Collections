@@ -5,7 +5,7 @@
 一个 Chromium Manifest V3 扩展，用来替代已下线的 Microsoft Edge「集锦（Collections）」。
 纯 JavaScript / HTML / CSS，无构建、无依赖、无遥测，数据只存在你自己的浏览器里。
 
-![version](https://img.shields.io/badge/version-1.0.0-2563eb)
+![version](https://img.shields.io/badge/version-1.1.0-2563eb)
 ![manifest](https://img.shields.io/badge/manifest-v3-16a34a)
 ![build](https://img.shields.io/badge/build-none-lightgrey)
 ![license](https://img.shields.io/badge/license-GPLv3-blue)
