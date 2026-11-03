@@ -2617,6 +2617,9 @@
       if (area === 'local' && changes[Storage.SETTINGS_KEY]) {
         Storage.loadSettings()
           .then(async (s) => {
+            const old = changes[Storage.SETTINGS_KEY].oldValue || {};
+            const oldAiEnabled = !!(old.ai && old.ai.enabled);
+            const oldWdEnabled = !!(old.webdav && old.webdav.enabled);
             captureSecretPresence(s);
             wdSettings = redactSettings(s);
             state.security = s.security;
@@ -2637,6 +2640,12 @@
             updateNetworkControls();
             scheduleAutoLock();
             refreshCollectMenuCopy();
+            refreshShortcuts();
+            // 其他窗口关闭开关时，本窗口也立即停止进行中的 AI 请求并取消同步。
+            if (oldAiEnabled && !state.aiEnabled && state.aiAbort) closeAiDrawer();
+            if (oldWdEnabled && !state.webdavEnabled) {
+              sendMessage({ type: 'webdav-cancel' }).catch(() => {});
+            }
           })
           .catch(() => {});
       }
