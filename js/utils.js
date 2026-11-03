@@ -131,6 +131,21 @@
     return host + path + (query ? '?' + query : '');
   };
 
+  // 唯一可收藏判定：只有 http/https 网页可以创建条目。所有采集入口最终都经过这里，
+  // 避免浏览器内部页、扩展自身页面、本地文件等被收藏或替换成其他标签。
+  Utils.URL_NOT_COLLECTABLE_MESSAGE = '当前页面或链接不受支持，只能收藏 http/https 网页';
+  Utils.isCollectableUrl = function (url) {
+    if (typeof url !== 'string') return false;
+    const input = url.trim();
+    if (!input) return false;
+    try {
+      const protocol = new URL(input).protocol;
+      return protocol === 'http:' || protocol === 'https:';
+    } catch (e) {
+      return false;
+    }
+  };
+
   // 卡片去重键：网页按规范化 URL；摘录按「来源 URL + 选区文本」，同页不同摘录不算重复。
   Utils.cardDedupeKey = function (card) {
     if (!card || typeof card !== 'object') return '';

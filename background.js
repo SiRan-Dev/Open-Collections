@@ -44,27 +44,12 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
 }
 
 // ---- 工具：获取「最近活跃的普通网页标签」----
-// 独立管理窗口/侧边栏自身是扩展页面，不是网页。用户在独立窗口里点「添加当前页面」
-// 或按摘录快捷键时，活动标签是扩展页，取不到目标网页。
-// 因此监听 tabs.onActivated/onUpdated，记录「最近活跃的普通 http/https 标签」。
-// 仅当活动标签是扩展自身页面（独立窗口）时回退使用它；侧边栏停在受限页时不回退，改为明确报错。
+// 仅用于批量收藏定位窗口（get-recent-web-window）。
+// 「添加当前页 / 摘录」不再使用该记录做任何回退：取不到活动标签或活动标签不可收藏时直接拒绝。
 const RECENT_TAB_KEY = 'recentWebTab';
 
 function isWebTabUrl(url) {
   return /^https?:/i.test(String(url || ''));
-}
-
-// 是否为扩展自身的页面（侧边栏/独立管理窗口）。只有这种场景才需要回退到「最近网页」；
-// 用户停在 chrome://、其它扩展页等受限页时，应把该页原样返回以便调用方明确报错。
-function isOwnManagementPage(url) {
-  try {
-    const base = typeof chrome.runtime.getURL === 'function'
-      ? chrome.runtime.getURL('')
-      : `chrome-extension://${chrome.runtime.id}/`;
-    return !!url && String(url).indexOf(base) === 0;
-  } catch (e) {
-    return false;
-  }
 }
 
 async function trackWebTab(tab) {
@@ -144,27 +129,22 @@ if (chrome.windows && chrome.windows.onFocusChanged) {
   });
 }
 
-// 活动标签是普通网页时直接用；扩展自身页面（独立窗口）才回退到最近活跃网页标签。
-// 用户主动停留在受限页时返回该页，由 addCurrentPage / saveSelection 给出明确错误，
-// 避免静默收藏/摘录到另一个网页。
+// 只返回当前活动标签，不做任何回退。
+// 受限页、扩展自身页面或查询不到标签时交给调用方明确拒绝，绝不替换成其他标签。
 async function getActiveWebTab() {
-  let tab = null;
   try {
     const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    tab = active || null;
-  } catch (e) {}
-  if (tab) {
-    if (isWebTabUrl(tab.url)) return tab;
-    if (!isOwnManagementPage(tab.url)) return tab;
+    return active || null;
+  } catch (e) {
+    return null;
   }
-  const recent = await readRecentWebTab();
-  if (recent && typeof recent.id === 'number') {
-    try {
-      const t = await chrome.tabs.get(recent.id);
-      if (t && isWebTabUrl(t.url)) return t;
-    } catch (e) {}
-  }
-  return null;
+}
+
+function notCollectableError(url) {
+  const err = new Error(Utils.URL_NOT_COLLECTABLE_MESSAGE);
+  err.code = 'URL_NOT_COLLECTABLE';
+  err.url = typeof url === 'string' ? url : '';
+  return err;
 }
 
 // ---- 工具：获取活动标签页信息（保留原行为供内部兼容调用）----
@@ -184,13 +164,10 @@ function faviconUrlFor(url) {
 }
 
 // ---- 添加当前页面到当前分组 ----
-async function addCurrentPage(options) {
-  options = options || {};
+async function addCurrentPage() {
   const tab = await getActiveWebTab();
-  if (!tab || !tab.url) throw new Error('请先在浏览器中打开一个网页再添加');
-  // 忽略扩展自身与浏览器内部页。
-  if (/^(chrome|edge|about|chrome-extension):/i.test(tab.url)) {
-    throw new Error('无法保存浏览器内部页面');
+  if (!tab || !tab.url || !Utils.isCollectableUrl(tab.url)) {
+    throw notCollectableError(tab && tab.url);
   }
   const groupId = await Storage.getActiveGroupId();
   if (!groupId) throw new Error('请先创建一个分组');
@@ -201,17 +178,16 @@ async function addCurrentPage(options) {
     favicon: faviconUrlFor(tab.url)
   };
 
-  if (!options.force) {
-    const settings = await Storage.loadSettings();
-    if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
-      const data = await Storage.load();
-      const dup = Storage.findDuplicateCard(data, input);
-      if (dup) {
-        const err = new Error(`该链接已存在于「${dup.group.name}」`);
-        err.code = 'duplicate';
-        err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
-        throw err;
-      }
+  // 防重复开启时命中已存在条目直接跳过；调用方只展示非阻塞提示，不再询问是否破例添加。
+  const settings = await Storage.loadSettings();
+  if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
+    const data = await Storage.load();
+    const dup = Storage.findDuplicateCard(data, input);
+    if (dup) {
+      const err = new Error(`该链接已存在于「${dup.group.name}」`);
+      err.code = 'duplicate';
+      err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+      throw err;
     }
   }
 
@@ -236,8 +212,8 @@ function selectionMessage(result) {
 async function saveSelection(options) {
   options = options || {};
   const tab = await getActiveWebTab();
-  if (!tab || !tab.id) throw new Error('请先在浏览器中打开一个网页再保存摘录');
-  if (!/^https?:/i.test(tab.url)) throw new Error('只能在普通网页中保存选区');
+  if (!tab || !tab.id) throw notCollectableError(null);
+  if (!Utils.isCollectableUrl(tab.url)) throw notCollectableError(tab.url);
 
   let selection = '';
   try {
@@ -275,17 +251,16 @@ async function saveSelection(options) {
     sourceUrl: tab.url
   };
 
-  if (!options.force) {
-    const settings = await Storage.loadSettings();
-    if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
-      const data = await Storage.load();
-      const dup = Storage.findDuplicateCard(data, input);
-      if (dup) {
-        const err = new Error(`该摘录已存在于「${dup.group.name}」`);
-        err.code = 'duplicate';
-        err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
-        throw err;
-      }
+  // 摘录沿用同一防重复策略：命中直接跳过，不弹确认，也不提供破例添加。
+  const settings = await Storage.loadSettings();
+  if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
+    const data = await Storage.load();
+    const dup = Storage.findDuplicateCard(data, input);
+    if (dup) {
+      const err = new Error(`该摘录已存在于「${dup.group.name}」`);
+      err.code = 'duplicate';
+      err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+      throw err;
     }
   }
 
@@ -416,18 +391,30 @@ chrome.windows.onRemoved.addListener((windowId) => {
 // 侧边栏；Chromium 不会为 _execute_action 派发 onCommand，因此这里不监听它，
 // 也就不会与浏览器默认行为重复触发导致面板打开两次。旧的 toggle-side-panel 命令
 // 已删除（与图标行为合并），用户为其自定义的绑定会随之失效，属预期行为。
+// 防重复命中时的统一非阻塞提示（快捷键路径用；侧边栏/窗口由 app.js 展示同一句）。
+function duplicateSkipMessage(e, isSelection) {
+  const name = (e && e.duplicate && e.duplicate.groupName) || '其他分组';
+  return isSelection
+    ? `该摘录已在「${name}」分组中，已跳过`
+    : `已在「${name}」分组中，已跳过`;
+}
+
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'add-current-page') {
     addCurrentPage()
       .then(() => notifyUI({ type: 'success', message: '已加入当前分组' }))
-      .catch((e) => notifyUI({ type: 'error', message: e.message }));
+      .catch((e) => notifyUI(e.code === 'duplicate'
+        ? { type: 'info', message: duplicateSkipMessage(e, false) }
+        : { type: 'error', message: e.message }));
   } else if (command === 'save-selection') {
     saveSelection()
       .then((res) => notifyUI({
         type: res && res.truncated ? 'info' : 'success',
         message: selectionMessage(res)
       }))
-      .catch((e) => notifyUI({ type: 'error', message: e.message }));
+      .catch((e) => notifyUI(e.code === 'duplicate'
+        ? { type: 'info', message: duplicateSkipMessage(e, true) }
+        : { type: 'error', message: e.message }));
   } else if (command === 'open-management-window') {
     openManagementWindow();
   }
@@ -439,7 +426,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg.type) {
     case 'add-current-page':
-      addCurrentPage({ force: !!msg.force })
+      addCurrentPage()
         .then(() => sendResponse({ ok: true, result: { message: '已加入当前分组' } }))
         .catch((e) => sendResponse({
           ok: false,

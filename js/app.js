@@ -701,7 +701,7 @@
       })
       .filter(Boolean);
     if (!urls.length) {
-      toast('只能拖入 http/https 网页链接', 'error');
+      toast(Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
       return;
     }
     const g = getActiveGroup();
@@ -731,7 +731,12 @@
       return;
     }
     const full = inputs.map((i) => Object.assign(i, { pinned: !!pinned }));
-    await Storage.addCards(g.id, full);
+    try {
+      await Storage.addCards(g.id, full);
+    } catch (e) {
+      toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
+      return;
+    }
     toast(`已收进「${g.name}」${urls.length - skippedDup} 个链接${pinned ? '（已固定）' : ''}${skippedDup ? `，跳过 ${skippedDup} 个重复` : ''}`, 'success');
     await loadAndRender();
   }
@@ -985,7 +990,8 @@
       closeDrawer('editor');
       await loadAndRender();
     } catch (e) {
-      toast('保存失败：' + (e.message || e), 'error');
+      if (e.code === 'URL_NOT_COLLECTABLE') toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
+      else toast('保存失败：' + (e.message || e), 'error');
     }
   }
 
@@ -1100,21 +1106,15 @@
 
   async function addCurrentPage() {
     try {
-      let res;
-      try {
-        res = await sendMessage({ type: 'add-current-page' });
-      } catch (e) {
-        if (e.code !== 'duplicate' || !e.duplicate) throw e;
-        const name = e.duplicate.groupName || '其他分组';
-        if (!confirm(`该链接已存在于「${name}」。\n仍然添加到当前分组？`)) {
-          toast(`已跳过：链接已存在于「${name}」`, 'info');
-          return;
-        }
-        res = await sendMessage({ type: 'add-current-page', force: true });
-      }
+      const res = await sendMessage({ type: 'add-current-page' });
       toast((res.result && res.result.message) || '已加入当前分组', 'success');
       await loadAndRender();
     } catch (e) {
+      if (e.code === 'duplicate' && e.duplicate) {
+        const name = e.duplicate.groupName || '其他分组';
+        toast(`已在「${name}」分组中，已跳过`, 'info');
+        return;
+      }
       toast(e.message, 'error');
     }
   }
@@ -1143,8 +1143,8 @@
   }
 
   function isCollectibleTab(tab) {
-    // 固定标签与浏览器内部页不参与。
-    return !!tab && !tab.pinned && /^https?:/i.test(tab.url || '');
+    // 固定标签不参与；可收藏性统一使用 Utils.isCollectableUrl（仅 http/https）。
+    return !!tab && !tab.pinned && Utils.isCollectableUrl(tab.url);
   }
 
   async function getCollectWindow() {
@@ -1186,16 +1186,25 @@
     }
   }
 
-  // 批量收藏核心：对指定窗口做去重确认 → 写入 → （可选）关闭已收藏标签。
+  // 批量收藏核心：对指定窗口做静默去重 → 写入 → （可选）关闭本批标签。
   // 写入失败时不会关闭任何标签。
   async function collectTabsFromWindow(win, closeAfter) {
     const settings = await Storage.loadSettings();
     const oneTabMode = !!(settings.behavior && settings.behavior.batchCollectDaily);
+    const allowDuplicates = !!(settings.behavior && settings.behavior.allowDuplicateLinks);
     const activeGroup = getActiveGroup();
     if (!oneTabMode && !activeGroup) throw new Error('请先创建一个分组');
 
     const targets = (win.tabs || []).filter(isCollectibleTab);
-    if (!targets.length) throw new Error('该窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
+    // 受限页只跳过、不参与写入；数量用于汇总提示，避免整批失败或静默丢失。
+    const unsupportedCount = (win.tabs || [])
+      .filter((tab) => tab && !tab.pinned && !Utils.isCollectableUrl(tab.url)).length;
+    if (!targets.length) {
+      // 全是不可收藏页面时与其它入口同一句提示；固定标签等纯空窗口保留原说明。
+      throw new Error(unsupportedCount
+        ? Utils.URL_NOT_COLLECTABLE_MESSAGE
+        : '该窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
+    }
 
     let items = targets.map((tab) => ({
       tab,
@@ -1207,61 +1216,46 @@
       }
     }));
 
-    // 默认按规范化 URL 跨分组查重；命中时明确提示并让用户选择「仍然添加」或跳过。
+    // 防重复开启时静默跳过重复，不弹确认框：已存在条目和本窗口先出现的相同链接都算重复。
     let skippedDuplicates = 0;
-    if (!state.allowDuplicateLinks) {
+    if (!allowDuplicates) {
       const data = await Storage.load();
       const seenKeys = new Set();
-      const duplicateIndexes = new Map();
+      const duplicateIndexes = new Set();
       items.forEach((item, index) => {
         const key = Utils.cardDedupeKey(item.input);
         if (!key) return;
-        const existing = Storage.findDuplicateCard(data, item.input);
-        const where = existing ? existing.group.name : (seenKeys.has(key) ? '本窗口其他标签页' : '');
-        if (where) duplicateIndexes.set(index, where);
+        if (Storage.findDuplicateCard(data, item.input) || seenKeys.has(key)) {
+          duplicateIndexes.add(index);
+        }
         seenKeys.add(key);
       });
-      if (duplicateIndexes.size) {
-        const list = Array.from(duplicateIndexes.entries());
-        const lines = list.slice(0, 5)
-          .map(([index, where]) => `• ${items[index].input.title} → 「${where}」`)
-          .join('\n');
-        const more = list.length > 5 ? `\n…等 ${list.length} 条` : '';
-        const stillAdd = confirm(
-          `检测到 ${list.length} 个重复链接：\n${lines}${more}\n\n` +
-          `确定 = 仍然全部添加；取消 = 跳过重复，只添加其余 ${items.length - list.length} 条`
-        );
-        if (!stillAdd) {
-          skippedDuplicates = list.length;
-          items = items.filter((item, index) => !duplicateIndexes.has(index));
-          if (!items.length) {
-            toast('已跳过全部重复链接，未添加任何标签页', 'info');
-            return;
-          }
-        }
-      }
+      skippedDuplicates = duplicateIndexes.size;
+      items = items.filter((item, index) => !duplicateIndexes.has(index));
     }
 
     const cardInputs = items.map((item) => item.input);
-    let targetGroup;
+    let targetGroup = null;
     let created = false;
     let revived = false;
-    if (oneTabMode) {
-      const res = await Storage.addCardsToDailyGroup(Utils.dateKey(Utils.now()), cardInputs);
-      targetGroup = res.group;
-      created = res.created;
-      revived = res.revived;
-    } else {
-      await Storage.addCards(activeGroup.id, cardInputs);
-      targetGroup = activeGroup;
+    if (cardInputs.length) {
+      if (oneTabMode) {
+        const res = await Storage.addCardsToDailyGroup(Utils.dateKey(Utils.now()), cardInputs);
+        targetGroup = res.group;
+        created = res.created;
+        revived = res.revived;
+      } else {
+        await Storage.addCards(activeGroup.id, cardInputs);
+        targetGroup = activeGroup;
+      }
     }
 
     let closed = 0;
     if (closeAfter) {
       // 先开一个新标签页接管窗口（侧边栏跟随窗口而非标签），
-      // 再关闭全部已收藏标签，包括当前页。被跳过的重复标签保持打开。
+      // 再关闭本批全部可收藏标签，包括被跳过的重复标签；受限页/固定标签保持打开。
       await chrome.tabs.create({ active: true, windowId: win.id });
-      const ids = items.map((item) => item.tab.id);
+      const ids = targets.map((tab) => tab.id);
       if (ids.length) {
         // 逐个关闭：若某个标签在收藏前已被关掉，批量 remove 会整体失败，
         // 导致已写入的收藏提示报错且界面不刷新；逐个关闭只统计真正关掉的标签。
@@ -1272,17 +1266,25 @@
       }
     }
 
-    const skipNote = skippedDuplicates ? `，跳过 ${skippedDuplicates} 个重复链接` : '';
-    if (closeAfter) {
-      toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}`, 'success');
+    const skipNote = skippedDuplicates ? `，跳过 ${skippedDuplicates} 条重复链接` : '';
+    const unsupportedNote = unsupportedCount ? `，跳过 ${unsupportedCount} 个不受支持的页面` : '';
+    const recoverNote = closed > 0 ? '；标签页已关闭，可用 Ctrl+Shift+T 恢复' : '';
+    if (closeAfter && !items.length) {
+      const closeNote = closed > 0 ? `，并关闭 ${closed} 个标签页` : '';
+      toast(`已跳过 ${skippedDuplicates} 条重复链接${unsupportedNote}${closeNote}${recoverNote}`, 'info');
+    } else if (closeAfter) {
+      toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}${unsupportedNote}${recoverNote}`, 'success');
+    } else if (!items.length) {
+      toast(`已跳过 ${skippedDuplicates} 条重复链接${unsupportedNote}，未添加任何标签页`, 'info');
+      return;
     } else if (oneTabMode && created) {
-      toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
+      toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}${unsupportedNote}`, 'success');
     } else if (oneTabMode && revived) {
-      toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
+      toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}${unsupportedNote}`, 'success');
     } else if (oneTabMode) {
-      toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}`, 'success');
+      toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
     } else {
-      toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}`, 'success');
+      toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
     }
     await loadAndRender();
   }
@@ -1391,6 +1393,11 @@
       toast(result.message || '摘录已保存', result.truncated ? 'info' : 'success');
       await loadAndRender();
     } catch (e) {
+      if (e.code === 'duplicate' && e.duplicate) {
+        const name = e.duplicate.groupName || '其他分组';
+        toast(`该摘录已在「${name}」分组中，已跳过`, 'info');
+        return;
+      }
       toast(e.message, 'error');
     }
   }
@@ -2755,7 +2762,8 @@
       }
       renderAiState('applied');
     } catch (e) {
-      toast('应用失败：' + (e.message || e), 'error');
+      if (e.code === 'URL_NOT_COLLECTABLE') toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
+      else toast('应用失败：' + (e.message || e), 'error');
     } finally {
       $('btn-ai-apply').disabled = false;
       $('btn-ai-cancel').disabled = false;
@@ -2824,6 +2832,7 @@
         ];
         if (result.settingsChanged) parts.push(`设置 ${result.settingsChanged} 个键`);
         if (result.aiCacheSkipped) parts.push('AI 缓存空间不足已跳过');
+        if (result.uncollectableSkipped) parts.push(`跳过 ${result.uncollectableSkipped} 个不受支持的链接`);
         detail = `（${parts.join('，')}）`;
       } else if (result) {
         detail = `（${result.groups} 个分组）`;
