@@ -172,6 +172,9 @@
             <button id="btn-behavior-save" class="btn btn-primary">保存设置</button>
           </div>
           <div id="behavior-status" class="wd-status"></div>
+          <div class="settings-actions">
+            <button id="btn-dedupe-scan" class="btn btn-ghost">查找并清理重复链接</button>
+          </div>
         </section>
 
         <section class="settings-section">
@@ -360,6 +363,39 @@
           <div class="settings-actions">
             <button id="btn-ai-undo" class="btn btn-ghost btn-danger-text">撤销本次整理</button>
             <button id="btn-ai-done" class="btn btn-primary">完成</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 重复链接清理抽屉 -->
+  <div id="dedupe-drawer" class="drawer hidden">
+    <div class="drawer-mask" data-close="dedupe"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <h2>查找并清理重复链接</h2>
+        <button class="btn-icon" data-close="dedupe" aria-label="关闭重复链接清理"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="drawer-body">
+        <div id="dedupe-form">
+          <p id="dedupe-summary" class="ai-summary"></p>
+          <div class="form-row form-inline dedupe-keep">
+            <label class="checkbox-label"><input type="radio" name="dedupe-keep" value="oldest" checked /> 保留最早添加</label>
+            <label class="checkbox-label"><input type="radio" name="dedupe-keep" value="newest" /> 保留最新添加</label>
+          </div>
+          <p class="hint">只清理网页卡片；摘录按「来源 URL + 选区文本」判定，不参与此清理。执行前会自动生成一份本地备份。</p>
+          <div id="dedupe-list" class="dedupe-list"></div>
+          <div class="settings-actions">
+            <button id="btn-dedupe-run" class="btn btn-primary">清理选中</button>
+            <button id="btn-dedupe-cancel" class="btn btn-ghost">取消</button>
+          </div>
+        </div>
+        <div id="dedupe-result" class="hidden">
+          <p id="dedupe-result-text" class="hint"></p>
+          <div class="settings-actions">
+            <button id="btn-dedupe-undo" class="btn btn-primary">撤销清理</button>
+            <button id="btn-dedupe-close" class="btn btn-ghost">关闭</button>
           </div>
         </div>
       </div>

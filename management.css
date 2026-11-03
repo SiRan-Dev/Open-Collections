@@ -459,6 +459,35 @@ html, body {
 }
 #ai-applied .settings-actions { margin-top: 4px; }
 
+/* 重复链接清理 */
+.dedupe-keep { gap: 14px; }
+.dedupe-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.dedupe-group { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft); }
+.dedupe-group-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
+.dedupe-group-name {
+  flex: 1; min-width: 0;
+  font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dedupe-group-count { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.dedupe-toggle { font-size: 11px; padding: 2px 6px; }
+.dedupe-cards {
+  list-style: none; margin: 0; padding: 0 10px 8px 28px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.dedupe-card-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+.dedupe-card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dedupe-card-group { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dedupe-card-time { white-space: nowrap; }
+.dedupe-badge {
+  font-size: 10px; padding: 1px 5px; border-radius: 4px;
+  color: #065f46; background: #d1fae5; white-space: nowrap;
+}
+@media (prefers-color-scheme: dark) {
+  .dedupe-badge { color: #6ee7b7; background: #064e3b; }
+}
+#dedupe-result .settings-actions { margin-top: 8px; }
+
 .settings-section { margin-bottom: 24px; }
 .settings-section h3 { margin: 0 0 10px; font-size: 14px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }

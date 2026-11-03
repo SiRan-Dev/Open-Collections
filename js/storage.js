@@ -283,6 +283,80 @@
     return null;
   };
 
+  // 查找全部重复链接组（仅网页卡片；摘录不参与），按添加时间升序返回组内条目。
+  Storage.findDuplicateGroups = function (data) {
+    const byKey = new Map();
+    const groups = (data && Array.isArray(data.groups)) ? data.groups : [];
+    for (const g of groups) {
+      if (g.deleted) continue;
+      for (const c of g.cards || []) {
+        if (c.deleted || c.type === 'excerpt') continue;
+        const key = Utils.cardDedupeKey(c);
+        if (!key) continue;
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push({ groupId: g.id, groupName: g.name, card: c });
+      }
+    }
+    const result = [];
+    for (const entries of byKey.values()) {
+      if (entries.length < 2) continue;
+      entries.sort((a, b) => (Number(a.card.addedAt) || 0) - (Number(b.card.addedAt) || 0));
+      result.push({ key: Utils.cardDedupeKey(entries[0].card), cards: entries });
+    }
+    return result;
+  };
+
+  // 批量软删除指定分组内的卡片。
+  Storage.deleteCards = async function (groupId, cardIds) {
+    const wanted = new Set(Array.isArray(cardIds) ? cardIds : []);
+    if (!wanted.size) return { removed: 0 };
+    return Storage.mutate((data) => {
+      const g = data.groups.find((x) => x.id === groupId);
+      if (!g) return { removed: 0 };
+      const now = Utils.now();
+      let removed = 0;
+      for (const c of g.cards) {
+        if (c.deleted || !wanted.has(c.id)) continue;
+        c.deleted = true;
+        c.deletedAt = now;
+        c.updatedAt = now;
+        removed++;
+      }
+      if (removed) g.updatedAt = now;
+      return { removed };
+    });
+  };
+
+  // 撤销重复清理：从备份快照恢复被删除的卡片（只恢复指定条目，不覆盖其他改动）。
+  Storage.restoreCardsFromBackup = async function (backupKey, entries) {
+    const backup = await Storage.getBackup(backupKey);
+    if (!backup || !Array.isArray(backup.groups)) throw new Error('备份不存在');
+    return Storage.mutate((data) => {
+      const now = Utils.now();
+      let restored = 0;
+      for (const entry of entries || []) {
+        const backupGroup = backup.groups.find((g) => g.id === entry.groupId);
+        if (!backupGroup) continue;
+        const backupCard = (backupGroup.cards || []).find((c) => c.id === entry.cardId);
+        if (!backupCard) continue;
+        const group = data.groups.find((g) => g.id === entry.groupId);
+        if (!group) continue;
+        const existing = group.cards.find((c) => c.id === entry.cardId);
+        if (existing) {
+          if (!existing.deleted) continue;
+          existing.deleted = false;
+          existing.deletedAt = null;
+          existing.updatedAt = now;
+        } else {
+          group.cards.push(Utils.clone(backupCard));
+        }
+        group.updatedAt = now;
+        restored++;
+      }
+      return { restored };
+    });
+  };
+
   Storage.addCards = async function (groupId, cardInputs) {
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId && !x.deleted);

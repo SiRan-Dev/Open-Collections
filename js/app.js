@@ -17,6 +17,12 @@
     batchCollectDaily: false,
     aiIncludeInbox: false,
     allowDuplicateLinks: false,
+    dedupeGroups: [],
+    dedupeSelected: new Set(),
+    dedupeExpanded: new Set(),
+    dedupeKeep: 'oldest',
+    dedupeBackupKey: null,
+    dedupeRemoved: [],
     dragCard: null,
     cardDropId: null,
     groupDropId: null
@@ -67,6 +73,7 @@
     els.settings = $('settings-drawer');
     els.editor = $('card-editor');
     els.aiDrawer = $('ai-drawer');
+    els.dedupeDrawer = $('dedupe-drawer');
   }
 
   // ---- 通知 ----
@@ -1223,6 +1230,7 @@
   }
 
   async function saveBehaviorSettings() {
+    const wasAllowed = state.allowDuplicateLinks;
     try {
       await persistSettings({
         behavior: {
@@ -1232,9 +1240,192 @@
         }
       }, { reschedule: false });
       setBehaviorStatus('设置已保存', 'success');
+      // 仅在「允许重复」由关变开时自动提示清理；没有重复则不打扰。
+      if (!wasAllowed && state.allowDuplicateLinks) {
+        await scanDuplicates(true);
+      }
     } catch (e) {
       setBehaviorStatus('保存失败：' + (e.message || e), 'error');
     }
+  }
+
+  // ---- 重复链接清理 ----
+  function dedupeKeeper(group) {
+    return state.dedupeKeep === 'newest'
+      ? group.cards[group.cards.length - 1]
+      : group.cards[0];
+  }
+
+  function updateDedupeSummary() {
+    const groupCount = state.dedupeGroups.length;
+    const cardCount = state.dedupeGroups.reduce((n, g) => n + g.cards.length, 0);
+    const selectedCount = state.dedupeSelected.size;
+    const keepLabel = state.dedupeKeep === 'newest' ? '最新' : '最早';
+    $('dedupe-summary').textContent =
+      `发现 ${groupCount} 组重复链接，涉及 ${cardCount} 条卡片；已选择 ${selectedCount} 组。` +
+      `默认保留${keepLabel}添加的一条，取消勾选可跳过该组。`;
+  }
+
+  function renderDedupeDialog() {
+    const list = $('dedupe-list');
+    list.innerHTML = '';
+    state.dedupeGroups.forEach((group, index) => {
+      const item = document.createElement('div');
+      item.className = 'dedupe-group';
+      const keeper = dedupeKeeper(group);
+      const head = document.createElement('div');
+      head.className = 'dedupe-group-head';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = state.dedupeSelected.has(index);
+      checkbox.dataset.dedupeIndex = String(index);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) state.dedupeSelected.add(index);
+        else state.dedupeSelected.delete(index);
+        updateDedupeSummary();
+      });
+
+      const name = document.createElement('span');
+      name.className = 'dedupe-group-name';
+      name.textContent = keeper.card.title || keeper.card.url || '（无标题）';
+      name.title = keeper.key;
+
+      const count = document.createElement('span');
+      count.className = 'dedupe-group-count';
+      count.textContent = `${group.cards.length} 条`;
+
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'btn btn-ghost dedupe-toggle';
+      toggle.textContent = state.dedupeExpanded.has(index) ? '收起' : '展开';
+      toggle.addEventListener('click', () => {
+        if (state.dedupeExpanded.has(index)) state.dedupeExpanded.delete(index);
+        else state.dedupeExpanded.add(index);
+        const expanded = state.dedupeExpanded.has(index);
+        cards.classList.toggle('hidden', !expanded);
+        toggle.textContent = expanded ? '收起' : '展开';
+      });
+
+      head.appendChild(checkbox);
+      head.appendChild(name);
+      head.appendChild(count);
+      head.appendChild(toggle);
+      item.appendChild(head);
+
+      const cards = document.createElement('ul');
+      cards.className = 'dedupe-cards' + (state.dedupeExpanded.has(index) ? '' : ' hidden');
+      group.cards.forEach((entry) => {
+        const li = document.createElement('li');
+        li.className = 'dedupe-card-row';
+        const title = document.createElement('span');
+        title.className = 'dedupe-card-title';
+        title.textContent = entry.card.title || entry.card.url || '（无标题）';
+        const where = document.createElement('span');
+        where.className = 'dedupe-card-group';
+        where.textContent = entry.groupName;
+        where.title = entry.groupName;
+        const time = document.createElement('span');
+        time.className = 'dedupe-card-time';
+        time.textContent = Utils.formatAddedTime(entry.card.addedAt);
+        const badge = document.createElement('span');
+        badge.className = 'dedupe-badge';
+        badge.textContent = '保留';
+        li.appendChild(title);
+        li.appendChild(where);
+        li.appendChild(time);
+        if (entry === keeper) li.appendChild(badge);
+        cards.appendChild(li);
+      });
+      item.appendChild(cards);
+      list.appendChild(item);
+    });
+    updateDedupeSummary();
+  }
+
+  async function scanDuplicates(auto) {
+    try {
+      const data = await Storage.load();
+      const groups = Storage.findDuplicateGroups(data);
+      if (!groups.length) {
+        if (!auto) toast('未发现重复链接', 'info');
+        return false;
+      }
+      state.dedupeGroups = groups;
+      state.dedupeSelected = new Set(groups.map((g, i) => i));
+      state.dedupeExpanded = new Set();
+      state.dedupeKeep = 'oldest';
+      state.dedupeBackupKey = null;
+      state.dedupeRemoved = [];
+      renderDedupeDialog();
+      $('dedupe-form').classList.remove('hidden');
+      $('dedupe-result').classList.add('hidden');
+      els.dedupeDrawer.classList.remove('hidden');
+      return true;
+    } catch (e) {
+      toast('查找重复链接失败：' + (e.message || e), 'error');
+      return false;
+    }
+  }
+
+  async function runDedupeCleanup() {
+    const selected = state.dedupeGroups.filter((g, index) => state.dedupeSelected.has(index));
+    const entries = [];
+    for (const group of selected) {
+      const keeper = dedupeKeeper(group);
+      for (const entry of group.cards) {
+        if (entry === keeper) continue;
+        entries.push({ groupId: entry.groupId, cardId: entry.card.id });
+      }
+    }
+    if (!entries.length) {
+      toast('没有需要清理的重复项', 'info');
+      return;
+    }
+    const btn = $('btn-dedupe-run');
+    btn.disabled = true;
+    try {
+      const backupKey = await Storage.createBackup('dedupe');
+      state.dedupeBackupKey = backupKey;
+      state.dedupeRemoved = entries;
+      const byGroup = new Map();
+      for (const entry of entries) {
+        if (!byGroup.has(entry.groupId)) byGroup.set(entry.groupId, []);
+        byGroup.get(entry.groupId).push(entry.cardId);
+      }
+      let removed = 0;
+      for (const [groupId, cardIds] of byGroup) {
+        const res = await Storage.deleteCards(groupId, cardIds);
+        removed += res.removed;
+      }
+      await loadAndRender();
+      $('dedupe-form').classList.add('hidden');
+      $('dedupe-result').classList.remove('hidden');
+      $('dedupe-result-text').textContent =
+        `已清理 ${removed} 条重复卡片（保留${state.dedupeKeep === 'newest' ? '最新' : '最早'}添加），已生成备份。`;
+      $('btn-dedupe-undo').classList.toggle('hidden', removed === 0);
+    } catch (e) {
+      toast('清理重复链接失败：' + (e.message || e), 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function undoDedupeCleanup() {
+    if (!state.dedupeBackupKey || !state.dedupeRemoved.length) return;
+    try {
+      const res = await Storage.restoreCardsFromBackup(state.dedupeBackupKey, state.dedupeRemoved);
+      await loadAndRender();
+      $('dedupe-result-text').textContent = `已恢复 ${res.restored} 条卡片。`;
+      $('btn-dedupe-undo').classList.add('hidden');
+      toast(`已恢复 ${res.restored} 条卡片`, 'success');
+    } catch (e) {
+      toast('撤销清理失败：' + (e.message || e), 'error');
+    }
+  }
+
+  function closeDedupeDrawer() {
+    els.dedupeDrawer.classList.add('hidden');
   }
 
   function readAiForm() {
@@ -1765,6 +1956,18 @@
     // 收藏行为
     $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
     $('behavior-batch-daily').addEventListener('change', updateAiInboxOptionVisibility);
+    $('btn-dedupe-scan').addEventListener('click', () => scanDuplicates(false));
+    $('btn-dedupe-run').addEventListener('click', runDedupeCleanup);
+    $('btn-dedupe-cancel').addEventListener('click', closeDedupeDrawer);
+    $('btn-dedupe-close').addEventListener('click', closeDedupeDrawer);
+    $('btn-dedupe-undo').addEventListener('click', undoDedupeCleanup);
+    document.querySelectorAll('input[name="dedupe-keep"]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        state.dedupeKeep = radio.value;
+        renderDedupeDialog();
+      });
+    });
 
     // AI 自动整理
     $('btn-ai-save').addEventListener('click', saveAiSettings);
@@ -1791,6 +1994,7 @@
       const name = el.dataset.close;
       el.addEventListener('click', () => {
         if (name === 'ai') closeAiDrawer();
+        else if (name === 'dedupe') closeDedupeDrawer();
         else closeDrawer(name);
       });
     });
@@ -1804,6 +2008,7 @@
         closeDrawer('settings');
         closeDrawer('editor');
         closeAiDrawer();
+        closeDedupeDrawer();
       }
     });
 
