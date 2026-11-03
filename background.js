@@ -33,7 +33,8 @@ chrome.runtime.onStartup.addListener(() => {
   rescheduleAutoSync().catch((e) => console.warn('[OpenCollections] reschedule auto sync failed:', e));
 });
 
-// 若侧边栏能力不可用，点击扩展图标时降级为打开独立窗口。
+// 点击工具栏图标（_execute_action）：支持的浏览器直接打开侧边栏（openPanelOnActionClick）；
+// 仅在不支持 sidePanel API 的环境，点击图标才降级为打开独立窗口（快捷键命令不做此降级）。
 if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   // 已经在 onInstalled 中设置；这里再尝试一次以防 SW 重启。
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -150,19 +151,40 @@ async function saveSelection(options) {
   return selection.length;
 }
 
-// ---- 侧边栏切换 ----
-async function toggleSidePanel() {
-  try {
-    if (!chrome.sidePanel || !chrome.sidePanel.open) {
-      // 不支持侧边栏的环境，降级为打开独立窗口。
-      openManagementWindow();
-      return;
+// ---- 打开侧边栏 ----
+// Chromium 侧边栏只有 open、没有关闭 API，命令语义就是「打开」；失败时给出可读提示，
+// 绝不降级为打开独立窗口——独立窗口有单独的命令（open-management-window）与按钮入口，
+// 两者共用会再次造成「按了侧边栏快捷键却开出独立窗口」的错觉。
+function sidePanelUnsupportedMessage() {
+  return '当前浏览器不支持侧边栏 API，请改用「打开独立管理窗口」命令或顶栏的独立窗口按钮';
+}
+
+async function openSidePanel(tab) {
+  if (!chrome.sidePanel || !chrome.sidePanel.open) {
+    notifyUI({ type: 'error', message: sidePanelUnsupportedMessage() });
+    return;
+  }
+  // onCommand 自带 tab.windowId 时直接同步使用，避免 await 之后再调 open 丢失用户手势；
+  // 键盘命令属于用户手势，但手势不一定跨越扩展的异步桥接。
+  let windowId = tab && typeof tab.windowId === 'number' ? tab.windowId : null;
+  if (windowId == null) {
+    try {
+      const win = await chrome.windows.getCurrent();
+      windowId = win && typeof win.id === 'number' ? win.id : null;
+    } catch (e) {
+      windowId = null;
     }
-    const win = await chrome.windows.getCurrent();
-    await chrome.sidePanel.open({ windowId: win.id });
+  }
+  if (windowId == null) {
+    notifyUI({ type: 'error', message: '无法打开侧边栏：没有可用的浏览器窗口' });
+    return;
+  }
+  try {
+    await chrome.sidePanel.open({ windowId });
   } catch (e) {
-    console.warn('[OpenCollections] side panel open failed, fallback to window:', e);
-    openManagementWindow();
+    const reason = (e && e.message) ? e.message : String(e);
+    console.warn('[OpenCollections] sidePanel.open failed:', reason);
+    notifyUI({ type: 'error', message: '无法打开侧边栏：' + reason });
   }
 }
 
@@ -176,7 +198,12 @@ function openManagementWindow() {
 }
 
 // ---- 快捷键 ----
-chrome.commands.onCommand.addListener((command) => {
+// 命令 → 处理器映射（与 manifest commands 一一对应，不得共用入口）：
+//   add-current-page       → addCurrentPage
+//   save-selection         → saveSelection
+//   toggle-side-panel      → openSidePanel（仅打开侧边栏）
+//   open-management-window → openManagementWindow（仅独立窗口）
+chrome.commands.onCommand.addListener((command, tab) => {
   if (command === 'add-current-page') {
     addCurrentPage()
       .then(() => notifyUI({ type: 'success', message: '已加入当前分组' }))
@@ -186,7 +213,9 @@ chrome.commands.onCommand.addListener((command) => {
       .then(() => notifyUI({ type: 'success', message: '摘录已保存' }))
       .catch((e) => notifyUI({ type: 'error', message: e.message }));
   } else if (command === 'toggle-side-panel') {
-    toggleSidePanel();
+    openSidePanel(tab);
+  } else if (command === 'open-management-window') {
+    openManagementWindow();
   }
 });
 

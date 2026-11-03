@@ -82,7 +82,7 @@ Open Collections 是一个本地网页收藏夹，用来替代已下线的 Micro
 · 端点仅接受 https；WebDAV 凭据与 AI API Key 经主密码加密后只保存在本机，仅发送给你自己填写的服务器或接口
 
 【快捷键】
-Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开/关闭侧边栏
+Ctrl+Shift+S 收藏当前页面 · Ctrl+Shift+E 保存摘录 · Ctrl+Shift+O 打开侧边栏
 （可在 edge://extensions/shortcuts 中修改）
 
 适合需要「稍后读」、整理资料、收集设计灵感与开发文档的用户。纯本地、无构建、开源可审查。

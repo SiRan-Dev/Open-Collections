@@ -60,7 +60,10 @@
         "default": "Ctrl+Shift+O",
         "mac": "Command+Shift+O"
       },
-      "description": "打开或关闭侧边栏 / Open or close the side panel"
+      "description": "打开侧边栏 / Open the side panel"
+    },
+    "open-management-window": {
+      "description": "打开独立管理窗口 / Open the standalone management window"
     }
   }
 }
