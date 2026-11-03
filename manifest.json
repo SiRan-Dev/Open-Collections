@@ -55,13 +55,6 @@
       },
       "description": "将选中文字保存为摘录 / Save selected text as an excerpt"
     },
-    "toggle-side-panel": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+O",
-        "mac": "Command+Shift+O"
-      },
-      "description": "打开侧边栏 / Open the side panel"
-    },
     "open-management-window": {
       "description": "打开独立管理窗口 / Open the standalone management window"
     }

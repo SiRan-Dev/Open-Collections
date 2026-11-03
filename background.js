@@ -151,43 +151,6 @@ async function saveSelection(options) {
   return selection.length;
 }
 
-// ---- 打开侧边栏 ----
-// Chromium 侧边栏只有 open、没有关闭 API，命令语义就是「打开」；失败时给出可读提示，
-// 绝不降级为打开独立窗口——独立窗口有单独的命令（open-management-window）与按钮入口，
-// 两者共用会再次造成「按了侧边栏快捷键却开出独立窗口」的错觉。
-function sidePanelUnsupportedMessage() {
-  return '当前浏览器不支持侧边栏 API，请改用「打开独立管理窗口」命令或顶栏的独立窗口按钮';
-}
-
-async function openSidePanel(tab) {
-  if (!chrome.sidePanel || !chrome.sidePanel.open) {
-    notifyUI({ type: 'error', message: sidePanelUnsupportedMessage() });
-    return;
-  }
-  // onCommand 自带 tab.windowId 时直接同步使用，避免 await 之后再调 open 丢失用户手势；
-  // 键盘命令属于用户手势，但手势不一定跨越扩展的异步桥接。
-  let windowId = tab && typeof tab.windowId === 'number' ? tab.windowId : null;
-  if (windowId == null) {
-    try {
-      const win = await chrome.windows.getCurrent();
-      windowId = win && typeof win.id === 'number' ? win.id : null;
-    } catch (e) {
-      windowId = null;
-    }
-  }
-  if (windowId == null) {
-    notifyUI({ type: 'error', message: '无法打开侧边栏：没有可用的浏览器窗口' });
-    return;
-  }
-  try {
-    await chrome.sidePanel.open({ windowId });
-  } catch (e) {
-    const reason = (e && e.message) ? e.message : String(e);
-    console.warn('[OpenCollections] sidePanel.open failed:', reason);
-    notifyUI({ type: 'error', message: '无法打开侧边栏：' + reason });
-  }
-}
-
 // ---- 独立管理窗口：尺寸策略只在这一处，所有入口（命令/消息/图标降级）共用 ----
 // 默认 1200×850；上限为屏幕可用区域的 92%（Service Worker 无 screen 对象，
 // 由 management 页面上报），极小屏时 92% 优先于最小宽度，保证窗口完整落在屏幕内。
@@ -306,9 +269,12 @@ chrome.windows.onRemoved.addListener((windowId) => {
 // 命令 → 处理器映射（与 manifest commands 一一对应，不得共用入口）：
 //   add-current-page       → addCurrentPage
 //   save-selection         → saveSelection
-//   toggle-side-panel      → openSidePanel（仅打开侧边栏）
-//   open-management-window → openManagementWindow（仅独立窗口）
-chrome.commands.onCommand.addListener((command, tab) => {
+//   open-management-window → openManagementWindow
+// 注意：面板唯一入口是工具栏图标（_execute_action），由上方 setPanelBehavior 直接打开
+// 侧边栏；Chromium 不会为 _execute_action 派发 onCommand，因此这里不监听它，
+// 也就不会与浏览器默认行为重复触发导致面板打开两次。旧的 toggle-side-panel 命令
+// 已删除（与图标行为合并），用户为其自定义的绑定会随之失效，属预期行为。
+chrome.commands.onCommand.addListener((command) => {
   if (command === 'add-current-page') {
     addCurrentPage()
       .then(() => notifyUI({ type: 'success', message: '已加入当前分组' }))
@@ -317,8 +283,6 @@ chrome.commands.onCommand.addListener((command, tab) => {
     saveSelection()
       .then(() => notifyUI({ type: 'success', message: '摘录已保存' }))
       .catch((e) => notifyUI({ type: 'error', message: e.message }));
-  } else if (command === 'toggle-side-panel') {
-    openSidePanel(tab);
   } else if (command === 'open-management-window') {
     openManagementWindow();
   }

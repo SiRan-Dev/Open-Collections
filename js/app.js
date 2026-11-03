@@ -54,10 +54,6 @@
       name: '保存摘录',
       desc: '把选中的文字存为摘录卡片'
     },
-    'toggle-side-panel': {
-      name: '打开侧边栏',
-      desc: '在当前窗口打开侧边栏（Chromium 无关闭 API，只能手动关闭）'
-    },
     'open-management-window': {
       name: '打开独立管理窗口',
       desc: '在新窗口打开管理界面'
