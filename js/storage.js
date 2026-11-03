@@ -97,6 +97,13 @@
     data.version = data.version || 1;
     if (!Array.isArray(data.groups)) data.groups = [];
     data.groups = data.groups.map(normalizeGroup).filter(Boolean);
+    // 「默认集锦」是受保护分组（system）：旧数据迁移——没有任何存活 system 组时，
+    // 给创建最早的存活分组打标（排除每日收件箱等临时组；onInstalled 新装时创建的组直接带 system）。
+    if (!data.groups.some((g) => g.system && !g.deleted)) {
+      const alive = data.groups.filter((g) => !g.deleted && !Storage.isDailyGroup(g))
+        .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+      if (alive.length) alive[0].system = true;
+    }
     if (!data.activeGroupId || !data.groups.find((g) => g.id === data.activeGroupId)) {
       data.activeGroupId = data.groups[0] ? data.groups[0].id : null;
     }
@@ -118,6 +125,8 @@
       updatedAt: Number(g.updatedAt) || Number(g.createdAt) || Utils.now(),
       deleted: !!g.deleted,
       deletedAt: g.deletedAt ? Number(g.deletedAt) : null,
+      // system：受保护的「默认集锦」，不可删除，AI 不得改其归属。
+      system: !!g.system,
       cards: Array.isArray(g.cards) ? g.cards.map(normalizeCard).filter(Boolean) : []
     };
   }
@@ -137,7 +146,9 @@
       addedAt: Number(c.addedAt) || Utils.now(),
       updatedAt: Number(c.updatedAt) || Number(c.addedAt) || Utils.now(),
       deleted: !!c.deleted,
-      deletedAt: c.deletedAt ? Number(c.deletedAt) : null
+      deletedAt: c.deletedAt ? Number(c.deletedAt) : null,
+      // pinned：用户固定条目，AI 整理与重复清理不得移动/删除（随条目同步）。
+      pinned: !!c.pinned
     };
   }
 
@@ -184,7 +195,8 @@
   };
 
   // ---- 分组操作 ----
-  Storage.createGroup = async function (name, color) {
+  Storage.createGroup = async function (name, color, options) {
+    const opts = options || {};
     return Storage.mutate((data) => {
       const idx = data.groups.filter((g) => !g.deleted).length + 1;
       const group = {
@@ -195,6 +207,7 @@
         updatedAt: Utils.now(),
         deleted: false,
         deletedAt: null,
+        system: !!opts.system,
         cards: []
       };
       data.groups.push(group);
@@ -223,11 +236,16 @@
     });
   };
 
-  // 软删除分组（带墓碑，便于同步）。
+  // 软删除分组（带墓碑，便于同步）。默认集锦（system）不可删除。
   Storage.deleteGroup = async function (groupId) {
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId);
       if (!g) return;
+      if (g.system) {
+        const err = new Error('「默认集锦」是受保护分组，不能删除');
+        err.code = 'protected';
+        throw err;
+      }
       g.deleted = true;
       g.deletedAt = Utils.now();
       g.updatedAt = Utils.now();
@@ -271,9 +289,24 @@
       addedAt: Utils.now(),
       updatedAt: Utils.now(),
       deleted: false,
-      deletedAt: null
+      deletedAt: null,
+      pinned: !!cardInput.pinned
     });
   }
+
+  // 切换卡片固定状态（默认集锦内的图钉按钮）。固定条目对 AI 整理与重复清理免疫。
+  Storage.setCardPinned = async function (groupId, cardId, pinned) {
+    return Storage.mutate((data) => {
+      const g = data.groups.find((x) => x.id === groupId && !x.deleted);
+      if (!g) throw new Error('分组不存在');
+      const c = g.cards.find((x) => x.id === cardId && !x.deleted);
+      if (!c) throw new Error('卡片不存在');
+      c.pinned = !!pinned;
+      c.updatedAt = Utils.now();
+      g.updatedAt = Utils.now();
+      return c;
+    });
+  };
 
   // 跨分组查找重复条目：网页按规范化 URL，摘录按来源 URL + 选区文本。
   // 返回 { group, card }；未命中返回 null。
@@ -292,14 +325,14 @@
     return null;
   };
 
-  // 查找全部重复链接组（仅网页卡片；摘录不参与），按添加时间升序返回组内条目。
+  // 查找全部重复链接组（仅网页卡片；摘录与固定条目不参与），按添加时间升序返回组内条目。
   Storage.findDuplicateGroups = function (data) {
     const byKey = new Map();
     const groups = (data && Array.isArray(data.groups)) ? data.groups : [];
     for (const g of groups) {
       if (g.deleted) continue;
       for (const c of g.cards || []) {
-        if (c.deleted || c.type === 'excerpt') continue;
+        if (c.deleted || c.type === 'excerpt' || c.pinned) continue;
         const key = Utils.cardDedupeKey(c);
         if (!key) continue;
         if (!byKey.has(key)) byKey.set(key, []);
@@ -315,24 +348,26 @@
     return result;
   };
 
-  // 批量软删除指定分组内的卡片。
+  // 批量软删除指定分组内的卡片。固定（pinned）条目受保护，跳过并计数。
   Storage.deleteCards = async function (groupId, cardIds) {
     const wanted = new Set(Array.isArray(cardIds) ? cardIds : []);
-    if (!wanted.size) return { removed: 0 };
+    if (!wanted.size) return { removed: 0, skippedPinned: 0 };
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId);
-      if (!g) return { removed: 0 };
+      if (!g) return { removed: 0, skippedPinned: 0 };
       const now = Utils.now();
       let removed = 0;
+      let skippedPinned = 0;
       for (const c of g.cards) {
         if (c.deleted || !wanted.has(c.id)) continue;
+        if (c.pinned) { skippedPinned++; continue; }
         c.deleted = true;
         c.deletedAt = now;
         c.updatedAt = now;
         removed++;
       }
       if (removed) g.updatedAt = now;
-      return { removed };
+      return { removed, skippedPinned };
     });
   };
 
@@ -486,7 +521,7 @@
       const sourceCards = new Map();
       for (const g of sources) {
         for (const c of g.cards) {
-          if (!c.deleted) sourceCards.set(c.id, { group: g, card: c });
+          if (!c.deleted && !c.pinned) sourceCards.set(c.id, { group: g, card: c });
         }
       }
 

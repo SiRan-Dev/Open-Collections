@@ -632,6 +632,38 @@ textarea.text-input { resize: vertical; }
 .checkbox-group { display: flex; flex-direction: column; gap: 6px; }
 .sub-option { margin-left: 22px; }
 
+/* 固定条目与固定区（默认集锦） */
+.pinned-divider {
+  list-style: none;
+  margin: 4px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+/* 卡片内所有图标统一显式尺寸，禁止 SVG 撑满容器。 */
+.card svg { width: 14px; height: 14px; flex: none; display: block; }
+.card.pinned { background: var(--bg-soft); }
+/* 图钉：卡片右上角动作区的小按钮（22px），默认低对比常显已固定态，未固定悬停才明显。 */
+.card-pin {
+  position: absolute; top: 6px; right: 66px;
+  width: 22px; height: 22px; flex: none;
+  border: none; border-radius: 6px;
+  background: transparent; color: var(--text-muted);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  padding: 0; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s;
+}
+.card:hover .card-pin,
+.card-pin:focus { opacity: 1; }
+.card-pin:hover { background: var(--bg-hover); color: var(--text); }
+.card-pin.active { opacity: 1; color: #f59e0b; }
+.card-pin:focus-visible { outline: 2px solid var(--primary); }
+.card-pin svg { width: 14px; height: 14px; flex: none; }
+#card-list.drop-target { outline: 2px dashed var(--primary); outline-offset: 2px; border-radius: 8px; }
+
 .wd-status {
   margin-top: 10px; padding: 8px 10px;
   border-radius: 6px; font-size: 12px;

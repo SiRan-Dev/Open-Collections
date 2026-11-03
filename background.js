@@ -19,7 +19,8 @@ chrome.runtime.onInstalled.addListener(async () => {
     const data = await Storage.load();
     const aliveGroups = data.groups.filter((g) => !g.deleted);
     if (aliveGroups.length === 0) {
-      await Storage.createGroup('默认集锦', Utils.PALETTE[0]);
+      // 首次安装创建受保护的「默认集锦」。
+      await Storage.createGroup('默认集锦', Utils.PALETTE[0], { system: true });
     }
   } catch (e) {
     console.error('[OpenCollections] init default group failed:', e);

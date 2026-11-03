@@ -14,6 +14,7 @@
     aiAbort: null,
     aiRunId: 0,
     aiInboxSkipped: 0,
+    aiPinnedSkipped: 0,
     batchCollectDaily: false,
     aiIncludeInbox: false,
     allowDuplicateLinks: false,
@@ -262,9 +263,14 @@
     els.groupNameInput.value = g.name;
     els.groupNameInput.dataset.id = g.id;
     const alive = g.cards.filter((c) => !c.deleted).length;
-    els.groupMeta.textContent = Storage.isDailyGroup(g)
-      ? `${alive} 个内容 · 每日收件箱（临时待整理） · 创建于 ${Utils.formatTime(g.createdAt)}`
-      : `${alive} 个内容 · 主题集锦 · 创建于 ${Utils.formatTime(g.createdAt)}`;
+    els.groupMeta.textContent = g.system
+      ? `${alive} 个内容 · 受保护分组`
+      : Storage.isDailyGroup(g)
+        ? `${alive} 个内容 · 每日收件箱（临时待整理） · 创建于 ${Utils.formatTime(g.createdAt)}`
+        : `${alive} 个内容 · 主题集锦 · 创建于 ${Utils.formatTime(g.createdAt)}`;
+    // 默认集锦（system）不可删除：隐藏删除按钮。
+    const delGroupBtn = $('btn-delete-group');
+    if (delGroupBtn) delGroupBtn.classList.toggle('hidden', !!g.system);
     renderColorPicker(g.color);
   }
 
@@ -397,7 +403,12 @@
       }
       els.searchCount.textContent = `${items.length} 条匹配 / 全部 ${totalAlive}`;
     } else {
-      items = g.cards.filter((c) => !c.deleted).map((c) => ({ card: c, group: g }));
+      // 默认集锦（system）内固定条目置顶，并渲染「已固定」分隔区。
+      const alive = g.cards.filter((c) => !c.deleted);
+      if (g.system && alive.some((c) => c.pinned)) {
+        alive.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+      }
+      items = alive.map((c) => ({ card: c, group: g }));
       els.searchCount.textContent = '';
     }
 
@@ -406,9 +417,24 @@
     els.cardList.style.display = isEmpty ? 'none' : '';
     if (isEmpty) updateEmptyState(q);
 
+    let dividerInserted = false;
     for (const it of items) {
-      els.cardList.appendChild(renderCard(it.card, it.group, !!q));
+      const isPinned = !q && it.group.system && !!it.card.pinned;
+      // 固定区开头插入一次分隔标题。
+      if (isPinned && !dividerInserted) {
+        els.cardList.appendChild(makePinnedDivider());
+        dividerInserted = true;
+      }
+      els.cardList.appendChild(renderCard(it.card, it.group, !!q, isPinned));
     }
+  }
+
+  // 固定区分隔标题。
+  function makePinnedDivider() {
+    const li = document.createElement('li');
+    li.className = 'pinned-divider';
+    li.textContent = '已固定（AI 整理与清理不会移动这些条目）';
+    return li;
   }
 
   // ---- 拖拽状态与落点提示 ----
@@ -599,34 +625,124 @@
 
     if (els.cardList) {
       els.cardList.addEventListener('dragover', (e) => {
-        if (!hasInternalDrag()) return;
-        if (e.target.closest('.card')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
-        setCardListInvalid();
+        if (hasInternalDrag()) {
+          if (e.target.closest('.card')) return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+          setCardListInvalid();
+          return;
+        }
+        // 外部拖放：默认集锦接受网页链接拖入（拖到固定区视为固定）。
+        if (acceptExternalDrop()) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+          els.cardList.classList.add('drop-target');
+        }
       });
 
       els.cardList.addEventListener('dragleave', (e) => {
-        if (!hasInternalDrag()) return;
         if (e.relatedTarget && els.cardList.contains(e.relatedTarget)) return;
-        els.cardList.classList.remove('drag-invalid');
+        els.cardList.classList.remove('drag-invalid', 'drop-target');
       });
 
       els.cardList.addEventListener('drop', (e) => {
-        if (!hasInternalDrag()) return;
-        if (e.target.closest('.card')) return;
+        if (hasInternalDrag()) {
+          if (e.target.closest('.card')) return;
+          e.preventDefault();
+          e.stopPropagation();
+          clearDragState();
+          toast('请把卡片放到具体分组或另一张卡片上', 'error');
+          return;
+        }
+        els.cardList.classList.remove('drop-target');
+        if (!acceptExternalDrop()) return;
         e.preventDefault();
         e.stopPropagation();
-        clearDragState();
-        toast('请把卡片放到具体分组或另一张卡片上', 'error');
+        const pinnedTarget = !!(e.target.closest && e.target.closest('.pinned-divider')) ||
+          !!(e.target.closest && e.target.closest('.card.pinned'));
+        handleExternalUrlDrop(e.dataTransfer, pinnedTarget);
       });
     }
   }
 
-  function renderCard(c, group, searching) {
+  // 外部拖放仅在默认集锦（system 分组）视图生效。
+  function acceptExternalDrop() {
+    const g = getActiveGroup();
+    return !!(g && g.system) && !state.search.trim();
+  }
+
+  // 解析外部拖入的 URL（text/uri-list / text/plain，支持多行多个链接）并按保存流程创建卡片。
+  async function handleExternalUrlDrop(dataTransfer, pinned) {
+    let text = '';
+    try {
+      text = dataTransfer.getData('text/uri-list') || dataTransfer.getData('text/plain') || '';
+    } catch (e) {
+      toast('无法读取拖入内容', 'error');
+      return;
+    }
+    const urls = String(text).split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .map((line) => {
+        try {
+          const u = new URL(line);
+          return /^https?:$/.test(u.protocol) ? u.href : '';
+        } catch (e) {
+          // text/plain 里可能混有文字，只提取 http(s) 链接。
+          const m = /https?:\/\/[^\s，,）)]+/i.exec(line);
+          if (!m) return '';
+          try {
+            const u = new URL(m[0]);
+            return /^https?:$/.test(u.protocol) ? u.href : '';
+          } catch (e2) { return ''; }
+        }
+      })
+      .filter(Boolean);
+    if (!urls.length) {
+      toast('只能拖入 http/https 网页链接', 'error');
+      return;
+    }
+    const g = getActiveGroup();
+    if (!g) return;
+    const settings = await Storage.loadSettings();
+    const allowDup = !!(settings.behavior && settings.behavior.allowDuplicateLinks);
+    const data = await Storage.load();
+    const inputs = [];
+    let skippedDup = 0;
+    for (const url of urls) {
+      let title;
+      try { title = new URL(url).hostname; } catch (e) { title = url; }
+      const input = { type: 'page', title, url, favicon: faviconUrl(url) };
+      if (!allowDup) {
+        const dup = Storage.findDuplicateCard(data, input);
+        if (dup) { skippedDup++; continue; }
+      }
+      inputs.push(input);
+    }
+    if (!inputs.length) {
+      toast(`拖入的 ${skippedDup} 个链接都已存在（去重开启），未添加。可在设置中允许重复后重试`, 'error');
+      return;
+    }
+    const full = inputs.map((i) => Object.assign(i, { pinned: !!pinned }));
+    await Storage.addCards(g.id, full);
+    toast(`已收进「${g.name}」${urls.length - skippedDup} 个链接${pinned ? '（已固定）' : ''}${skippedDup ? `，跳过 ${skippedDup} 个重复` : ''}`, 'success');
+    await loadAndRender();
+  }
+
+  // favicon URL 构造（与 background 一致）。
+  function faviconUrl(url) {
+    try {
+      return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(url)}&size=32`;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function renderCard(c, group, searching, isPinned) {
     const li = document.createElement('li');
-    li.className = 'card';
+    li.className = 'card' + (isPinned ? ' pinned' : '');
     li.dataset.id = c.id;
     li.draggable = !searching;
 
@@ -703,6 +819,26 @@
     body.appendChild(meta);
     li.appendChild(body);
 
+    // 图钉：仅默认集锦（system 分组）内显示；固定条目对 AI 整理与清理免疫。
+    if (group.system && !searching) {
+      const pinBtn = document.createElement('button');
+      pinBtn.className = 'card-pin' + (c.pinned ? ' active' : '');
+      pinBtn.title = c.pinned ? '取消固定（恢复参与 AI 整理与清理）' : '固定（AI 整理与清理不会移动它）';
+      pinBtn.setAttribute('aria-label', pinBtn.title);
+      pinBtn.appendChild(iconSvg('pin'));
+      pinBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await Storage.setCardPinned(group.id, c.id, !c.pinned);
+          toast(c.pinned ? '已取消固定' : '已固定：AI 整理与清理不会移动这条', 'success');
+          await loadAndRender();
+        } catch (err) {
+          toast('操作失败：' + (err.message || err), 'error');
+        }
+      });
+      li.appendChild(pinBtn);
+    }
+
     const editBtn = document.createElement('button');
     editBtn.className = 'card-edit';
     editBtn.title = '编辑标题 / 备注';
@@ -726,7 +862,7 @@
     // 单击卡片直接打开原链接（摘录打开来源页）。
     li.addEventListener('click', (e) => {
       if (e.target.closest('.card-handle') || e.target.closest('.card-edit') ||
-        e.target.closest('.card-delete')) return;
+        e.target.closest('.card-delete') || e.target.closest('.card-pin')) return;
       openCardLink(c);
     });
 
@@ -2293,6 +2429,7 @@
     state.aiPlan = null;
     state.aiGroupIds = [];
     state.aiInboxSkipped = 0;
+    state.aiPinnedSkipped = 0;
     state.aiBackupKey = null;
     updateAiInboxSkipHint();
     $('btn-ai-organize').disabled = false;
@@ -2301,11 +2438,15 @@
   function updateAiInboxSkipHint() {
     const el = $('ai-inbox-skip');
     if (!el) return;
-    const count = state.aiInboxSkipped;
-    el.classList.toggle('hidden', count <= 0);
-    el.textContent = count > 0
-      ? `收件箱 ${count} 条未参与本次整理（可在设置中开启「AI 整理时包含每日收件箱的条目」）`
-      : '';
+    const parts = [];
+    if (state.aiInboxSkipped > 0) {
+      parts.push(`收件箱 ${state.aiInboxSkipped} 条未参与本次整理（可在设置中开启「AI 整理时包含每日收件箱的条目」）`);
+    }
+    if (state.aiPinnedSkipped > 0) {
+      parts.push(`${state.aiPinnedSkipped} 条已固定，未参与本次整理`);
+    }
+    el.classList.toggle('hidden', !parts.length);
+    el.textContent = parts.join('；');
   }
 
   function renderAiState(name) {
@@ -2331,18 +2472,21 @@
     }
     const cards = [];
     const cardGroupNames = {};
+    let pinnedSkippedCount = 0;
     for (const id of groupIds) {
       const g = state.data.groups.find((x) => x.id === id && !x.deleted);
       if (!g) continue;
       for (const c of g.cards) {
         if (c.deleted) continue;
+        // 固定条目对 AI 整理免疫：不参与请求，也不被移动。
+        if (c.pinned) { pinnedSkippedCount++; continue; }
         cards.push(c);
         cardGroupNames[c.id] = g.name;
       }
     }
     const skippedCount = skippedGroups.reduce(
       (n, g) => n + g.cards.filter((c) => !c.deleted).length, 0);
-    return { groupIds, cards, cardGroupNames, skippedCount, explicitInbox };
+    return { groupIds, cards, cardGroupNames, skippedCount, pinnedSkippedCount, explicitInbox };
   }
 
   function renderAiPlan(plan) {
@@ -2489,6 +2633,7 @@
       state.aiAbort = controller;
       state.aiGroupIds = candidate.groupIds.slice();
       state.aiInboxSkipped = candidate.skippedCount;
+      state.aiPinnedSkipped = candidate.pinnedSkippedCount || 0;
       state.aiBackupKey = null;
       if (candidate.explicitInbox) {
         toast('当前为收件箱视图，已按你的操作整理收件箱条目', 'info');
