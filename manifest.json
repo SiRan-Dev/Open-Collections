@@ -43,21 +43,21 @@
         "default": "Ctrl+Shift+S",
         "mac": "Command+Shift+S"
       },
-      "description": "将当前页面加入当前分组"
+      "description": "将当前页面加入当前分组 / Add the current page to the current group"
     },
     "save-selection": {
       "suggested_key": {
         "default": "Ctrl+Shift+E",
         "mac": "Command+Shift+E"
       },
-      "description": "将当前页面选中文字存为摘录卡片"
+      "description": "将选中文字保存为摘录 / Save selected text as an excerpt"
     },
     "toggle-side-panel": {
       "suggested_key": {
         "default": "Ctrl+Shift+O",
         "mac": "Command+Shift+O"
       },
-      "description": "打开/关闭 Open Collections 侧边栏"
+      "description": "打开或关闭侧边栏 / Open or close the side panel"
     }
   }
 }

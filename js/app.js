@@ -1172,6 +1172,7 @@
     updateSecurityUI();
     updateNetworkControls();
     scheduleAutoLock();
+    refreshShortcuts();
     refreshAiCacheInfo().catch(() => {});
   }
 
@@ -1291,6 +1292,121 @@
     $('consent-drawer').classList.add('hidden');
     if (kind === 'ai') await saveAiSettings(true);
     else if (kind === 'webdav') await saveSettings(true);
+  }
+
+  // ---- 快捷键 ----
+  let shortcutsSnapshot = [];
+
+  function normalizeShortcutKey(key) {
+    const parts = String(key || '').split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
+    if (!parts.length) return '';
+    return parts.sort().join('+');
+  }
+
+  function openShortcutPage(command) {
+    const url = /Edg\//i.test(navigator.userAgent)
+      ? 'edge://extensions/shortcuts'
+      : 'chrome://extensions/shortcuts';
+    try {
+      chrome.tabs.create({ url });
+    } catch (e) {
+      toast('无法打开浏览器快捷键页面，请手动访问 ' + url, 'error');
+      return;
+    }
+    const label = command && command.name ? `「${command.name}」` : '';
+    const desc = command && command.description ? `（${command.description}）` : '';
+    toast(`请在打开的快捷键页面中找到 Open Collections 的${label}${desc} 项进行修改`, 'info');
+  }
+
+  function refreshShortcuts() {
+    const list = $('shortcuts-list');
+    const status = $('shortcuts-status');
+    if (!list) return;
+    if (!chrome.commands || typeof chrome.commands.getAll !== 'function') {
+      shortcutsSnapshot = [];
+      list.innerHTML = '';
+      if (status) status.textContent = '当前环境不支持读取快捷键绑定。';
+      return;
+    }
+    chrome.commands.getAll((commands) => {
+      if (chrome.runtime.lastError) {
+        if (status) status.textContent = '读取快捷键失败：' + chrome.runtime.lastError.message;
+        return;
+      }
+      const items = Array.isArray(commands) ? commands : [];
+      shortcutsSnapshot = items;
+      list.innerHTML = '';
+      const byKey = new Map();
+      items.forEach((c) => {
+        const key = normalizeShortcutKey(c.shortcut);
+        if (!key) return;
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push(c.name);
+      });
+      const conflictKeys = new Set();
+      byKey.forEach((names, key) => {
+        if (names.length > 1) conflictKeys.add(key);
+      });
+
+      items.forEach((c) => {
+        const key = normalizeShortcutKey(c.shortcut);
+        const row = document.createElement('div');
+        row.className = 'shortcut-row';
+        row.dataset.command = c.name || '';
+
+        const info = document.createElement('div');
+        info.className = 'shortcut-info';
+        const name = document.createElement('span');
+        name.className = 'shortcut-name';
+        name.textContent = c.name || '未命名命令';
+        const desc = document.createElement('span');
+        desc.className = 'shortcut-desc';
+        desc.textContent = c.description || '（无说明）';
+        info.appendChild(name);
+        info.appendChild(desc);
+
+        const keyBadge = document.createElement('span');
+        keyBadge.className = 'shortcut-key' + (c.shortcut ? '' : ' unset');
+        keyBadge.textContent = c.shortcut || '未设置';
+        if (!c.shortcut) keyBadge.title = '未设置：可在浏览器快捷键页面绑定';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-ghost btn-sm';
+        btn.textContent = '去修改';
+        btn.dataset.shortcutCommand = c.name || '';
+        btn.addEventListener('click', () => {
+          const command = shortcutsSnapshot.find((x) => x.name === c.name) || c;
+          openShortcutPage(command);
+        });
+
+        row.appendChild(info);
+        row.appendChild(keyBadge);
+        row.appendChild(btn);
+
+        if (key && conflictKeys.has(key)) {
+          row.classList.add('shortcut-conflict');
+          const others = (byKey.get(key) || []).filter((n) => n !== c.name);
+          const warn = document.createElement('span');
+          warn.className = 'shortcut-warning';
+          warn.textContent = `可能冲突：与「${others.join('、')}」相同`;
+          row.appendChild(warn);
+        }
+        list.appendChild(row);
+      });
+
+      if (status) {
+        if (conflictKeys.size) {
+          status.textContent = `检测到 ${conflictKeys.size} 组重复绑定，可能冲突；可在快捷键页面调整。`;
+        } else if (items.some((c) => !c.shortcut)) {
+          status.textContent = `共 ${items.length} 个命令，其中有 ${items.filter((c) => !c.shortcut).length} 个未设置快捷键。`;
+        } else if (items.length) {
+          status.textContent = `共 ${items.length} 个命令，显示值来自浏览器当前绑定。`;
+        } else {
+          status.textContent = '没有可显示的快捷键命令。';
+        }
+      }
+    });
   }
 
   async function focusSecuritySettings(message) {
@@ -2411,6 +2527,11 @@
     $('btn-security-change-confirm').addEventListener('click', changeMasterPassword);
     $('btn-security-clear').addEventListener('click', clearMasterPassword);
     $('security-auto-lock').addEventListener('change', updateAutoLockSetting);
+    $('btn-shortcuts-refresh').addEventListener('click', refreshShortcuts);
+    window.addEventListener('focus', refreshShortcuts);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshShortcuts();
+    });
     $('btn-consent-confirm').addEventListener('click', confirmConsent);
     $('btn-consent-cancel').addEventListener('click', closeConsent);
     if (els.btnOnboardingClose) {
