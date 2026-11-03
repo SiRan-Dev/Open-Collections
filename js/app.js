@@ -1244,6 +1244,8 @@
     $('wd-remote-dir').value = w.remoteDir || '/open-collections';
     $('wd-autosync').checked = !!w.autoSync;
     $('wd-interval').value = Number(w.intervalMinutes) || 30;
+    $('wd-sync-aicache').checked = !!(w.syncScope && w.syncScope.aiCache);
+    $('wd-sync-backups').checked = !!(w.syncScope && w.syncScope.backups);
     $('behavior-batch-daily').checked = !!b.batchCollectDaily;
     $('behavior-ai-inbox').checked = !!b.aiIncludeInbox;
     $('behavior-allow-dup').checked = !!b.allowDuplicateLinks;
@@ -1569,7 +1571,11 @@
       url: $('wd-url').value.trim(),
       remoteDir: $('wd-remote-dir').value.trim() || '/open-collections',
       autoSync: $('wd-autosync').checked,
-      intervalMinutes: Math.max(5, Number($('wd-interval').value) || 30)
+      intervalMinutes: Math.max(5, Number($('wd-interval').value) || 30),
+      syncScope: {
+        aiCache: $('wd-sync-aicache').checked,
+        backups: $('wd-sync-backups').checked
+      }
     };
     const username = $('wd-username').value.trim();
     const password = $('wd-password').value;
@@ -2435,7 +2441,20 @@
       $('wd-password').value = '';
       const res = await sendMessage({ type: 'webdav-sync', mode });
       const result = res && res.result;
-      setWDStatus(`${label}完成 ✓${result ? `（${result.groups} 个分组）` : ''}`, 'success');
+      let detail = '';
+      if (result && result.stats) {
+        const cs = result.stats.cards;
+        const gs = result.stats.groups;
+        const parts = [
+          `分组 新增${gs.added}/更新${gs.updated}/删除${gs.deleted}`,
+          `卡片 新增${cs.added}/更新${cs.updated}/删除${cs.deleted}`
+        ];
+        if (result.settingsChanged) parts.push(`设置 ${result.settingsChanged} 个键`);
+        detail = `（${parts.join('，')}）`;
+      } else if (result) {
+        detail = `（${result.groups} 个分组）`;
+      }
+      setWDStatus(`${label}完成 ✓${detail}`, 'success');
       await loadAndRender();
     } catch (e) {
       setWDStatus(`${label}失败：${e.message || e}`, 'error');

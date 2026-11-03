@@ -21,7 +21,9 @@
       password: '',
       remoteDir: '/open-collections',
       autoSync: false,
-      intervalMinutes: 30
+      intervalMinutes: 30,
+      // 同步范围：收藏与分组 + 设置项始终同步；分类缓存与备份快照可选，默认关。
+      syncScope: { aiCache: false, backups: false }
     },
     behavior: {
       batchCollectDaily: false,
@@ -837,6 +839,7 @@
     const base = Utils.clone(DEFAULT_SETTINGS);
     if (!raw || typeof raw !== 'object') return base;
     const webdav = raw.webdav && typeof raw.webdav === 'object' ? raw.webdav : {};
+    const syncScope = webdav.syncScope && typeof webdav.syncScope === 'object' ? webdav.syncScope : {};
     base.webdav = {
       enabled: !!webdav.enabled,
       url: typeof webdav.url === 'string' ? webdav.url : '',
@@ -844,7 +847,11 @@
       password: typeof webdav.password === 'string' ? webdav.password : '',
       remoteDir: typeof webdav.remoteDir === 'string' && webdav.remoteDir ? webdav.remoteDir : '/open-collections',
       autoSync: !!webdav.autoSync,
-      intervalMinutes: Math.max(5, Number(webdav.intervalMinutes) || 30)
+      intervalMinutes: Math.max(5, Number(webdav.intervalMinutes) || 30),
+      syncScope: {
+        aiCache: !!syncScope.aiCache,
+        backups: !!syncScope.backups
+      }
     };
     const behavior = raw.behavior && typeof raw.behavior === 'object' ? raw.behavior : {};
     base.behavior = {
@@ -919,7 +926,11 @@
     const next = normalizeSettings({
       ...current,
       ...p,
-      webdav: { ...current.webdav, ...(p.webdav || {}) },
+      webdav: {
+        ...current.webdav,
+        ...(p.webdav || {}),
+        syncScope: { ...(current.webdav.syncScope || {}), ...((p.webdav || {}).syncScope || {}) }
+      },
       behavior: { ...current.behavior, ...(p.behavior || {}) },
       ai: { ...current.ai, ...(p.ai || {}) },
       security: current.security,
@@ -955,8 +966,118 @@
     if (next.secretsV) {
       for (const field of SECRET_FIELDS) writePath(next, field.path, '');
     }
+    // 记录参与同步的设置键的最后修改时间（供 WebDAV 键级合并）。
+    // 时间戳先写、设置后写：writeSettings 是本函数最后一个 await，
+    // 保证调用方在设置落盘后能同步继续后续 UI 更新（避免轮询竞态）。
+    const meta = await loadSettingsMeta();
+    const stampNow = Utils.now();
+    let metaChanged = false;
+    for (const keyPath of SYNC_SETTINGS_KEYS) {
+      if (JSON.stringify(readKeyPath(current, keyPath)) !== JSON.stringify(readKeyPath(next, keyPath))) {
+        meta.keys[keyPath] = stampNow;
+        metaChanged = true;
+      }
+    }
+    if (metaChanged) await saveSettingsMeta(meta);
     await writeSettings(next);
     return next;
+  };
+
+  // ---- 设置同步：键级 last-writer-wins（凭据与保险库密钥永不参与）----
+  const SETTINGS_META_KEY = 'openpocket:settings-meta';
+  Storage.SETTINGS_META_KEY = SETTINGS_META_KEY;
+
+  // 参与同步的设置键（secrets/secretsV/security 与凭据字段不在列）。
+  const SYNC_SETTINGS_KEYS = [
+    'webdav.enabled', 'webdav.url', 'webdav.remoteDir', 'webdav.autoSync', 'webdav.intervalMinutes',
+    'webdav.syncScope.aiCache', 'webdav.syncScope.backups',
+    'behavior.batchCollectDaily', 'behavior.aiIncludeInbox', 'behavior.allowDuplicateLinks',
+    'ai.enabled', 'ai.baseUrl', 'ai.model', 'ai.categories'
+  ];
+  Storage.SYNC_SETTINGS_KEYS = SYNC_SETTINGS_KEYS.slice();
+
+  function readKeyPath(obj, dotted) {
+    let cur = obj;
+    for (const part of dotted.split('.')) {
+      if (!cur || typeof cur !== 'object') return undefined;
+      cur = cur[part];
+    }
+    return cur;
+  }
+
+  function writeKeyPath(obj, dotted, value) {
+    const parts = dotted.split('.');
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+      cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = value;
+  }
+
+  function loadSettingsMeta() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(SETTINGS_META_KEY, (items) => {
+        const raw = items && items[SETTINGS_META_KEY];
+        const keys = raw && typeof raw.keys === 'object' && raw.keys ? raw.keys : {};
+        resolve({ v: 1, keys: Object.assign({}, keys) });
+      });
+    });
+  }
+  Storage.loadSettingsMeta = loadSettingsMeta;
+
+  function saveSettingsMeta(meta) {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [SETTINGS_META_KEY]: meta }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+  }
+
+  // 导出用于同步的设置：只含 SYNC_SETTINGS_KEYS，绝不含凭据、密文与设备专属值。
+  Storage.exportSettingsForSync = async function () {
+    const settings = await Storage.loadSettings();
+    const meta = await loadSettingsMeta();
+    const out = {};
+    const keys = {};
+    for (const keyPath of SYNC_SETTINGS_KEYS) {
+      writeKeyPath(out, keyPath, Utils.clone(readKeyPath(settings, keyPath)));
+      keys[keyPath] = Number(meta.keys[keyPath]) || 0;
+    }
+    return { settings: out, keys };
+  };
+
+  // 合并远端设置：按每个键的最后修改时间取新；force（仅下载）时远端全量覆盖。
+  // 不触碰凭据、secrets 与保险库。返回 { changed: string[] }。
+  Storage.applySyncedSettings = async function (remoteSettings, remoteKeys, options) {
+    const force = !!(options && options.force);
+    const local = await Storage.loadSettings();
+    const meta = await loadSettingsMeta();
+    const next = Utils.clone(local);
+    const changed = [];
+    for (const keyPath of SYNC_SETTINGS_KEYS) {
+      const remoteValue = readKeyPath(remoteSettings || {}, keyPath);
+      if (remoteValue === undefined) continue;
+      const rts = Number(remoteKeys && remoteKeys[keyPath]) || 0;
+      const lts = Number(meta.keys[keyPath]) || 0;
+      if (!force && rts <= lts) continue;
+      if (JSON.stringify(readKeyPath(next, keyPath)) !== JSON.stringify(remoteValue)) {
+        writeKeyPath(next, keyPath, Utils.clone(remoteValue));
+        changed.push(keyPath);
+      }
+      meta.keys[keyPath] = Math.max(lts, rts);
+    }
+    // 凭据与加密状态始终保持本地值，远端内容绝不含这些字段。
+    next.webdav.username = local.webdav.username;
+    next.webdav.password = local.webdav.password;
+    next.ai.apiKey = local.ai.apiKey;
+    next.security = local.security;
+    next.secrets = local.secrets;
+    next.secretsV = local.secretsV;
+    await writeSettings(normalizeSettings(next));
+    await saveSettingsMeta(meta);
+    return { changed };
   };
 
   // 读取并解密全部敏感字段；只在调用方即将使用时临时解密。
@@ -1286,6 +1407,69 @@
       }
     }
     return data;
+  };
+
+  // 对比同步前后的收藏数据，统计新增/更新/删除数量（用于同步报告）。
+  Storage.diffCollections = function (before, after) {
+    const stats = {
+      groups: { added: 0, updated: 0, deleted: 0 },
+      cards: { added: 0, updated: 0, deleted: 0 }
+    };
+    const bGroups = new Map(((before && before.groups) || []).map((g) => [g.id, g]));
+    for (const ag of ((after && after.groups) || [])) {
+      const bg = bGroups.get(ag.id);
+      if (!bg) {
+        if (!ag.deleted) {
+          stats.groups.added++;
+          stats.cards.added += ag.cards.filter((c) => !c.deleted).length;
+        }
+        continue;
+      }
+      if (!bg.deleted && ag.deleted) stats.groups.deleted++;
+      else if (bg.deleted && !ag.deleted) stats.groups.added++;
+      else if (!bg.deleted && ag.updatedAt !== bg.updatedAt) stats.groups.updated++;
+      const bCards = new Map(bg.cards.map((c) => [c.id, c]));
+      for (const ac of ag.cards) {
+        const bc = bCards.get(ac.id);
+        if (!bc) {
+          if (!ac.deleted) stats.cards.added++;
+          continue;
+        }
+        if (!bc.deleted && ac.deleted) stats.cards.deleted++;
+        else if (bc.deleted && !ac.deleted) stats.cards.added++;
+        else if (!bc.deleted && !ac.deleted && ac.updatedAt !== bc.updatedAt) stats.cards.updated++;
+      }
+    }
+    return stats;
+  };
+
+  // 写入远端同步来的备份快照（键必须在备份命名空间内）。
+  Storage.putBackup = async function (key, data) {
+    if (typeof key !== 'string' || key.indexOf(BACKUP_PREFIX) !== 0 || !data || typeof data !== 'object') {
+      throw new Error('非法的备份快照');
+    }
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [key]: data }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+  };
+
+  // 覆盖写分类缓存（同步用），按时间裁剪到上限。
+  Storage.saveAiCacheRaw = async function (cache) {
+    const entries = Object.entries(cache && typeof cache === 'object' ? cache : {});
+    entries.sort((a, b) => ((b[1] && b[1].t) || 0) - ((a[1] && a[1].t) || 0));
+    const out = {};
+    for (const [k, v] of entries.slice(0, AI_CACHE_MAX)) {
+      if (v && typeof v.c === 'string') out[k] = { c: v.c, t: Number(v.t) || 0 };
+    }
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [AI_CACHE_KEY]: out }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
   };
 
   global.Storage = Storage;

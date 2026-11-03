@@ -280,6 +280,20 @@
             <label>同步间隔（分钟，最小 5）</label>
             <input id="wd-interval" class="text-input" type="number" min="5" value="30" />
           </div>
+          <div class="form-row">
+            <label>同步内容</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label">
+                <input id="wd-sync-aicache" type="checkbox" />
+                分类缓存（AI 分类记录，默认不同步）
+              </label>
+              <label class="checkbox-label">
+                <input id="wd-sync-backups" type="checkbox" />
+                备份快照（最近 3 份本地快照，默认不同步）
+              </label>
+            </div>
+          </div>
+          <p class="hint">收藏与分组、设置项始终同步；WebDAV 凭据、AI API Key 与本地密钥永不同步。远端结构带版本号（openpocket/v2），版本不兼容时会停止同步并说明原因，不会强行覆盖。</p>
           <div class="settings-actions">
             <button id="btn-wd-save" class="btn btn-primary">保存设置</button>
             <button id="btn-wd-test" class="btn btn-ghost">测试连接</button>

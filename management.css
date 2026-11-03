@@ -562,6 +562,7 @@ body.standalone-window {
 .text-input:focus { outline: none; border-color: var(--primary); }
 textarea.text-input { resize: vertical; }
 .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.checkbox-group { display: flex; flex-direction: column; gap: 6px; }
 .sub-option { margin-left: 22px; }
 
 .wd-status {
