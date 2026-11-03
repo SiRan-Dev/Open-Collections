@@ -23,7 +23,8 @@
       intervalMinutes: 30
     },
     behavior: {
-      batchCollectDaily: false
+      batchCollectDaily: false,
+      aiIncludeInbox: false
     },
     ai: {
       baseUrl: '',
@@ -366,33 +367,51 @@
     });
   };
 
-  // 应用 AI 整理方案：优先复用规范化同名的已有分组，否则新建；卡片复制后原卡片打墓碑。
+  // 应用 AI 整理方案：可来自多个源分组；优先复用规范化同名的已有分组，否则新建；卡片复制后原卡片打墓碑。
   Storage.applyOrganizePlan = async function (plan) {
     plan = plan || {};
     return Storage.mutate((data) => {
-      const source = data.groups.find((g) => g.id === plan.sourceGroupId && !g.deleted);
-      if (!source) throw new Error('原分组不存在');
+      const sourceIds = Array.isArray(plan.sourceGroupIds) && plan.sourceGroupIds.length
+        ? plan.sourceGroupIds
+        : (plan.sourceGroupId ? [plan.sourceGroupId] : []);
+      const sources = data.groups.filter((g) => !g.deleted && sourceIds.includes(g.id));
+      if (!sources.length) throw new Error('原分组不存在');
+      const sourceIdSet = new Set(sources.map((g) => g.id));
+      const sourceCards = new Map();
+      for (const g of sources) {
+        for (const c of g.cards) {
+          if (!c.deleted) sourceCards.set(c.id, { group: g, card: c });
+        }
+      }
+
       const specs = Array.isArray(plan.groups) ? plan.groups : [];
       const now = Utils.now();
       const baseColorIndex = data.groups.filter((g) => !g.deleted).length;
       const createdGroups = [];
       const reusedGroups = [];
+      const updatedSources = new Set();
       let movedCards = 0;
 
       for (let i = 0; i < specs.length; i++) {
         const spec = specs[i];
         if (!spec || !Array.isArray(spec.cardIds)) continue;
-        const wanted = new Set(spec.cardIds.filter((id) => typeof id === 'string'));
-        const cards = source.cards.filter((c) => !c.deleted && wanted.has(c.id));
-        if (!cards.length) continue;
+        const picked = [];
+        const seen = new Set();
+        for (const id of spec.cardIds) {
+          if (typeof id !== 'string' || seen.has(id)) continue;
+          seen.add(id);
+          const entry = sourceCards.get(id);
+          if (entry) picked.push(entry);
+        }
+        if (!picked.length) continue;
 
         let name = typeof spec.name === 'string' ? spec.name.trim() : '';
         if (!name) name = '整理 ' + (i + 1);
         const nameKey = Utils.normalizeName(name);
 
-        // 按规范化名称复用已有分组，不再给同名分组加「 2」后缀。
+        // 按规范化名称复用已有分组；所有源分组都不作为复用目标。
         let target = data.groups.find((g) =>
-          !g.deleted && g.id !== source.id && Utils.normalizeName(g.name) === nameKey);
+          !g.deleted && !sourceIdSet.has(g.id) && Utils.normalizeName(g.name) === nameKey);
         const reused = !!target;
 
         if (!target) {
@@ -412,24 +431,26 @@
           data.groups.push(target);
         }
 
-        for (const card of cards) {
-          const copy = Utils.clone(card);
+        for (const entry of picked) {
+          sourceCards.delete(entry.card.id);
+          const copy = Utils.clone(entry.card);
           copy.id = Utils.uuid();
-          copy.addedAt = card.addedAt;
+          copy.addedAt = entry.card.addedAt;
           copy.updatedAt = now;
           target.cards.push(copy);
-          card.deleted = true;
-          card.deletedAt = now;
-          card.updatedAt = now;
+          entry.card.deleted = true;
+          entry.card.deletedAt = now;
+          entry.card.updatedAt = now;
+          updatedSources.add(entry.group);
           movedCards++;
         }
 
         target.updatedAt = now;
-        if (reused) reusedGroups.push({ id: target.id, name: target.name, count: cards.length });
+        if (reused) reusedGroups.push({ id: target.id, name: target.name, count: picked.length });
         else createdGroups.push({ id: target.id, name: target.name, count: target.cards.length });
       }
 
-      if (movedCards > 0) source.updatedAt = now;
+      updatedSources.forEach((g) => { g.updatedAt = now; });
       return { createdGroups, reusedGroups, movedCards };
     });
   };
@@ -667,7 +688,8 @@
     };
     const behavior = raw.behavior && typeof raw.behavior === 'object' ? raw.behavior : {};
     base.behavior = {
-      batchCollectDaily: !!behavior.batchCollectDaily
+      batchCollectDaily: !!behavior.batchCollectDaily,
+      aiIncludeInbox: !!behavior.aiIncludeInbox
     };
     const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
     const categories = Utils.normalizeCategories(ai.categories);

@@ -9,11 +9,13 @@
     editingCardId: null,
     aiConfig: null,
     aiPlan: null,
-    aiGroupId: null,
+    aiGroupIds: [],
     aiBackupKey: null,
     aiAbort: null,
     aiRunId: 0,
+    aiInboxSkipped: 0,
     batchCollectDaily: false,
+    aiIncludeInbox: false,
     dragCard: null,
     cardDropId: null,
     groupDropId: null
@@ -1063,6 +1065,8 @@
     $('wd-autosync').checked = !!w.autoSync;
     $('wd-interval').value = Number(w.intervalMinutes) || 30;
     $('behavior-batch-daily').checked = !!b.batchCollectDaily;
+    $('behavior-ai-inbox').checked = !!b.aiIncludeInbox;
+    updateAiInboxOptionVisibility();
     $('ai-base-url').value = a.baseUrl || '';
     $('ai-api-key').value = a.apiKey || '';
     $('ai-model').value = a.model || '';
@@ -1071,6 +1075,7 @@
       : AI.DEFAULT_CATEGORIES).join('\n');
     state.aiConfig = wdSettings.ai;
     state.batchCollectDaily = !!b.batchCollectDaily;
+    state.aiIncludeInbox = !!b.aiIncludeInbox;
     refreshAiCacheInfo().catch(() => {});
   }
 
@@ -1128,6 +1133,7 @@
     wdSettings = await Storage.updateSettings(s);
     state.aiConfig = wdSettings.ai;
     state.batchCollectDaily = !!(wdSettings.behavior && wdSettings.behavior.batchCollectDaily);
+    state.aiIncludeInbox = !!(wdSettings.behavior && wdSettings.behavior.aiIncludeInbox);
     if (opts.reschedule !== false) await sendMessage({ type: 'webdav-reschedule' });
   }
 
@@ -1140,11 +1146,21 @@
     }
   }
 
+  function updateAiInboxOptionVisibility() {
+    const block = $('behavior-ai-inbox-block');
+    const cb = $('behavior-ai-inbox');
+    if (!block || !cb) return;
+    const enabled = !!$('behavior-batch-daily').checked;
+    block.classList.toggle('hidden', !enabled);
+    cb.disabled = !enabled;
+  }
+
   async function saveBehaviorSettings() {
     try {
       await persistSettings({
         behavior: {
-          batchCollectDaily: $('behavior-batch-daily').checked
+          batchCollectDaily: $('behavior-batch-daily').checked,
+          aiIncludeInbox: $('behavior-ai-inbox').checked
         }
       }, { reschedule: false });
       setBehaviorStatus('设置已保存', 'success');
@@ -1276,19 +1292,69 @@
     }
     els.aiDrawer.classList.add('hidden');
     state.aiPlan = null;
-    state.aiGroupId = null;
+    state.aiGroupIds = [];
+    state.aiInboxSkipped = 0;
     state.aiBackupKey = null;
+    updateAiInboxSkipHint();
     $('btn-ai-organize').disabled = false;
+  }
+
+  function updateAiInboxSkipHint() {
+    const el = $('ai-inbox-skip');
+    if (!el) return;
+    const count = state.aiInboxSkipped;
+    el.classList.toggle('hidden', count <= 0);
+    el.textContent = count > 0
+      ? `收件箱 ${count} 条未参与本次整理（可在设置中开启「AI 整理时包含每日收件箱的条目」）`
+      : '';
   }
 
   function renderAiState(name) {
     ['ai-loading', 'ai-empty', 'ai-error', 'ai-proposal', 'ai-applied'].forEach((id) => {
       $(id).classList.toggle('hidden', id !== 'ai-' + name);
     });
+    updateAiInboxSkipHint();
+  }
+
+  // 计算本次 AI 整理的候选范围：当前分组 + 可选的每日收件箱。
+  function collectAiCandidates(current) {
+    const includeInbox = !!state.batchCollectDaily && !!state.aiIncludeInbox;
+    const currentIsInbox = Storage.isDailyGroup(current);
+    // 在收件箱视图内主动点击「AI 整理」属于显式意图，即使总开关关闭也执行一次。
+    const explicitInbox = currentIsInbox && !includeInbox;
+    const inboxGroups = state.data.groups.filter((g) => !g.deleted && Storage.isDailyGroup(g));
+    const groupIds = [current.id];
+    const skippedGroups = [];
+    for (const g of inboxGroups) {
+      if (g.id === current.id) continue;
+      if (includeInbox || currentIsInbox) groupIds.push(g.id);
+      else skippedGroups.push(g);
+    }
+    const cards = [];
+    const cardGroupNames = {};
+    for (const id of groupIds) {
+      const g = state.data.groups.find((x) => x.id === id && !x.deleted);
+      if (!g) continue;
+      for (const c of g.cards) {
+        if (c.deleted) continue;
+        cards.push(c);
+        cardGroupNames[c.id] = g.name;
+      }
+    }
+    const skippedCount = skippedGroups.reduce(
+      (n, g) => n + g.cards.filter((c) => !c.deleted).length, 0);
+    return { groupIds, cards, cardGroupNames, skippedCount, explicitInbox };
   }
 
   function renderAiPlan(plan) {
-    const group = state.data.groups.find((g) => g.id === state.aiGroupId && !g.deleted);
+    const cardMap = new Map();
+    state.aiGroupIds.forEach((id) => {
+      const g = state.data.groups.find((x) => x.id === id && !x.deleted);
+      if (!g) return;
+      g.cards.forEach((c) => {
+        if (!c.deleted) cardMap.set(c.id, c);
+      });
+    });
     const list = $('ai-plan-list');
     list.innerHTML = '';
     $('ai-summary').textContent = plan.summary || `AI 建议拆分为 ${plan.groups.length} 个分组。`;
@@ -1332,7 +1398,6 @@
         item.appendChild(reason);
       }
 
-      const cardMap = new Map((group ? group.cards : []).map((c) => [c.id, c]));
       const cards = g.cardIds.map((id) => cardMap.get(id)).filter(Boolean);
       const cardList = document.createElement('ul');
       cardList.className = 'ai-plan-cards';
@@ -1375,13 +1440,17 @@
       toast('请先选择一个分组', 'error');
       return;
     }
-    const cards = group.cards.filter((c) => !c.deleted);
+    const candidate = collectAiCandidates(group);
+    const cards = candidate.cards;
     if (cards.length < 2) {
-      toast('当前分组至少需要 2 条内容才能整理', 'error');
+      const extra = candidate.skippedCount
+        ? `；收件箱 ${candidate.skippedCount} 条未参与本次整理`
+        : '';
+      toast(`当前可整理内容至少需要 2 条${extra}`, 'error');
       return;
     }
     if (cards.length > AI.MAX_CARDS) {
-      toast(`当前分组有 ${cards.length} 条内容，一次最多整理 ${AI.MAX_CARDS} 条，请先拆分分组`, 'error');
+      toast(`本次范围有 ${cards.length} 条内容，一次最多整理 ${AI.MAX_CARDS} 条，请先缩小候选范围`, 'error');
       return;
     }
     if (state.aiAbort) return;
@@ -1399,9 +1468,16 @@
       runId = ++state.aiRunId;
       const controller = new AbortController();
       state.aiAbort = controller;
-      state.aiGroupId = group.id;
+      state.aiGroupIds = candidate.groupIds.slice();
+      state.aiInboxSkipped = candidate.skippedCount;
       state.aiBackupKey = null;
-      $('ai-loading-text').textContent = `正在分析「${group.name}」中的 ${cards.length} 条内容…`;
+      if (candidate.explicitInbox) {
+        toast('当前为收件箱视图，已按你的操作整理收件箱条目', 'info');
+      }
+      const scopeLabel = candidate.groupIds.length > 1
+        ? `「${group.name}」与每日收件箱`
+        : `「${group.name}」`;
+      $('ai-loading-text').textContent = `正在分析${scopeLabel}中的 ${cards.length} 条内容…`;
       openAiDrawer();
       renderAiState('loading');
 
@@ -1420,6 +1496,7 @@
         categories: categoryList,
         cache,
         cards,
+        cardGroupNames: candidate.cardGroupNames,
         signal: controller.signal
       });
       if (runId !== state.aiRunId) return;
@@ -1432,7 +1509,7 @@
       const aliveCount = state.data.groups.filter((g) => !g.deleted).length;
       plan.groups.forEach((g, index) => {
         const existing = state.data.groups.find((x) =>
-          !x.deleted && x.id !== state.aiGroupId &&
+          !x.deleted && !state.aiGroupIds.includes(x.id) &&
           Utils.normalizeName(x.name) === Utils.normalizeName(g.name));
         if (existing) {
           g.color = existing.color;
@@ -1466,7 +1543,7 @@
   }
 
   async function applyAiPlan() {
-    if (!state.aiPlan || !state.aiGroupId) return;
+    if (!state.aiPlan || !state.aiGroupIds.length) return;
     const checks = Array.from($('ai-plan-list').querySelectorAll('input[data-ai-index]'));
     const selected = checks
       .filter((n) => n.checked)
@@ -1480,12 +1557,12 @@
       .map((i) => state.aiPlan.groups[i])
       .filter(Boolean)
       .map((g) => ({ name: g.name, color: g.color, cardIds: g.cardIds }));
-    const sourceGroupId = state.aiGroupId;
+    const sourceGroupIds = state.aiGroupIds.slice();
     $('btn-ai-apply').disabled = true;
     $('btn-ai-cancel').disabled = true;
     try {
       const backupKey = await Storage.createBackup('ai-organize');
-      const res = await Storage.applyOrganizePlan({ sourceGroupId, groups });
+      const res = await Storage.applyOrganizePlan({ sourceGroupIds, groups });
       state.aiBackupKey = backupKey;
       await loadAndRender();
       $('ai-applied-text').textContent = res.movedCards
@@ -1613,6 +1690,7 @@
 
     // 收藏行为
     $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
+    $('behavior-batch-daily').addEventListener('change', updateAiInboxOptionVisibility);
 
     // AI 自动整理
     $('btn-ai-save').addEventListener('click', saveAiSettings);
@@ -1671,6 +1749,7 @@
           .then((s) => {
             state.aiConfig = s.ai;
             state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
+            state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
             refreshCollectMenuCopy();
           })
           .catch(() => {});
@@ -1696,6 +1775,7 @@
       .then((s) => {
         state.aiConfig = s.ai;
         state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
+        state.aiIncludeInbox = !!(s.behavior && s.behavior.aiIncludeInbox);
         refreshCollectMenuCopy();
       })
       .catch((e) => console.warn('[OpenCollections] load settings failed:', e));

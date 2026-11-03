@@ -241,7 +241,6 @@
     const categories = options.categories || DEFAULT_CATEGORIES;
     const otherCategory = matchCategory(categories, '其他') || '其他';
     const otherKey = Utils.normalizeName(otherCategory);
-    const sourceKey = Utils.normalizeName(options.sourceName);
     const usedAliases = new Set();
     const usedCardIds = new Set();
     const buckets = new Map();
@@ -253,9 +252,6 @@
       const rawName = String(raw.name || '').trim().replace(/\s+/g, ' ');
       if (!rawName) continue;
       const matched = matchCategory(categories, rawName);
-      // 已经属于原分组名称的内容留在原分组，不重复创建同名分组。
-      if (matched && Utils.normalizeName(matched) === sourceKey) continue;
-
       let targetName = matched || otherCategory;
       let targetKey = Utils.normalizeName(targetName);
       let reason = String(raw.reason || '').trim().slice(0, 40);
@@ -272,6 +268,13 @@
         const cardId = aliases.get(alias);
         if (usedCardIds.has(cardId) || localSeen.has(cardId)) continue;
         localSeen.add(cardId);
+        // 已经属于同名分类分组的卡片留在原分组，不重复创建同名分组；
+        // 多源整理时按每张卡片的来源分组名判断，收件箱卡片仍可移入主题分组。
+        if (matched && options.staysInSource && options.staysInSource(cardId, matched)) {
+          usedAliases.add(alias);
+          usedCardIds.add(cardId);
+          continue;
+        }
         localAliases.push(alias);
         localCardIds.push(cardId);
       }
@@ -375,6 +378,19 @@
     const existingNames = (Array.isArray(opts.existingNames) ? opts.existingNames : [])
       .map((n) => matchCategory(categoryList, n))
       .filter((n, i, arr) => n && arr.indexOf(n) === i);
+    // 多源整理：记录每张卡片的来源分组名，用于判断「已在同名分类分组，无需移动」。
+    const cardGroupNames = opts.cardGroupNames && typeof opts.cardGroupNames === 'object'
+      ? opts.cardGroupNames
+      : null;
+    const sourceKey = Utils.normalizeName(sourceName);
+    const staysInSource = (cardId, categoryName) => {
+      const key = Utils.normalizeName(categoryName);
+      if (!key) return false;
+      if (cardGroupNames && cardGroupNames[cardId]) {
+        return Utils.normalizeName(cardGroupNames[cardId]) === key;
+      }
+      return key === sourceKey;
+    };
 
     // 按 URL 去重；同一 URL 的条目只发送一条，分类结果再展开到全部重复项。
     const byUrl = new Map();
@@ -414,14 +430,15 @@
       }
     }
     const cacheHits = cached.length;
-    const sourceKey = Utils.normalizeName(sourceName);
-    const plannedCache = cached.filter((item) => Utils.normalizeName(item.category) !== sourceKey);
+    const plannedCache = cached.filter((item) => !staysInSource(item.cardId, item.category));
 
     if (!reps.length) {
       const merged = mergeCachedGroups([], plannedCache);
       let summary;
       if (merged.groups.length) summary = '全部内容已命中本地缓存，本次未调用 AI。';
-      else if (cacheHits) summary = '全部内容已属于当前分组分类，无需移动。';
+      else if (cacheHits) summary = cardGroupNames
+        ? '全部内容已属于各自分组的分类，无需移动。'
+        : '全部内容已属于当前分组分类，无需移动。';
       else summary = '全部内容已命中本地缓存，但无法形成有效分类，当前分组保持不变。';
       return {
         groups: merged.groups,
@@ -481,7 +498,7 @@
     const parsed = parseJsonText(content);
     const validated = validatePlan(parsed, built.aliases, {
       categories: categoryList,
-      sourceName
+      staysInSource
     });
 
     // 把代表卡片的分类展开到同一 URL 的重复条目。
@@ -493,10 +510,11 @@
         seen.add(cardId);
         expanded.push(cardId);
         for (const dupId of duplicatesByRep.get(cardId) || []) {
-          if (!seen.has(dupId)) {
-            seen.add(dupId);
-            expanded.push(dupId);
-          }
+          if (seen.has(dupId)) continue;
+          // 重复项若已在同名分类分组内，保持原位，避免被误移。
+          if (staysInSource(dupId, group.name)) continue;
+          seen.add(dupId);
+          expanded.push(dupId);
         }
       }
       group.cardIds = expanded;

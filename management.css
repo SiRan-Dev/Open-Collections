@@ -484,6 +484,7 @@ html, body {
 .text-input:focus { outline: none; border-color: var(--primary); }
 textarea.text-input { resize: vertical; }
 .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.sub-option { margin-left: 22px; }
 
 .wd-status {
   margin-top: 10px; padding: 8px 10px;
