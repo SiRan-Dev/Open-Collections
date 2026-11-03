@@ -97,6 +97,16 @@
   // 忽略协议、末尾斜杠、片段与常见跟踪参数，保留 host + path + query 的实质部分。
   const TRACKING_PARAMS = /^(utm_.*|gclid|fbclid|msclkid|yclid|mc_cid|mc_eid|igshid|spm)$/i;
 
+  // RFC 3986 等价归一：百分号编码的十六进制统一大写；非保留字符（A-Z a-z 0-9 - . _ ~）
+  // 的百分号编码还原为字面字符，避免 /%7Euser 与 /~user、a%2Fb 与 a%2fb 被当成不同链接。
+  const UNRESERVED_CHAR = /[A-Za-z0-9\-._~]/;
+  function normalizeEncodedPath(path) {
+    return String(path || '').replace(/%([0-9a-fA-F]{2})/g, (m, hex) => {
+      const ch = String.fromCharCode(parseInt(hex, 16));
+      return UNRESERVED_CHAR.test(ch) ? ch : '%' + hex.toUpperCase();
+    });
+  }
+
   Utils.normalizeUrl = function (raw) {
     const input = String(raw || '').trim();
     if (!input) return '';
@@ -110,7 +120,7 @@
       return input.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
     }
     const host = u.host.toLowerCase();
-    const path = u.pathname.replace(/\/+$/, '') || '/';
+    const path = normalizeEncodedPath(u.pathname).replace(/\/+$/, '') || '/';
     const params = new URLSearchParams(u.search);
     const keys = Array.from(new Set(Array.from(params.keys())));
     for (const key of keys) {
