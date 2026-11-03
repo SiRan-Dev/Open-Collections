@@ -164,8 +164,7 @@ function faviconUrlFor(url) {
 }
 
 // ---- 添加当前页面到当前分组 ----
-async function addCurrentPage(options) {
-  options = options || {};
+async function addCurrentPage() {
   const tab = await getActiveWebTab();
   if (!tab || !tab.url || !Utils.isCollectableUrl(tab.url)) {
     throw notCollectableError(tab && tab.url);
@@ -179,17 +178,16 @@ async function addCurrentPage(options) {
     favicon: faviconUrlFor(tab.url)
   };
 
-  if (!options.force) {
-    const settings = await Storage.loadSettings();
-    if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
-      const data = await Storage.load();
-      const dup = Storage.findDuplicateCard(data, input);
-      if (dup) {
-        const err = new Error(`该链接已存在于「${dup.group.name}」`);
-        err.code = 'duplicate';
-        err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
-        throw err;
-      }
+  // 防重复开启时命中已存在条目直接跳过；调用方只展示非阻塞提示，不再询问是否破例添加。
+  const settings = await Storage.loadSettings();
+  if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
+    const data = await Storage.load();
+    const dup = Storage.findDuplicateCard(data, input);
+    if (dup) {
+      const err = new Error(`该链接已存在于「${dup.group.name}」`);
+      err.code = 'duplicate';
+      err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+      throw err;
     }
   }
 
@@ -198,8 +196,7 @@ async function addCurrentPage(options) {
 }
 
 // ---- 保存选中文字为摘录卡片 ----
-async function saveSelection(options) {
-  options = options || {};
+async function saveSelection() {
   const tab = await getActiveWebTab();
   if (!tab || !tab.id) throw notCollectableError(null);
   if (!Utils.isCollectableUrl(tab.url)) throw notCollectableError(tab.url);
@@ -236,17 +233,16 @@ async function saveSelection(options) {
     sourceUrl: tab.url
   };
 
-  if (!options.force) {
-    const settings = await Storage.loadSettings();
-    if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
-      const data = await Storage.load();
-      const dup = Storage.findDuplicateCard(data, input);
-      if (dup) {
-        const err = new Error(`该摘录已存在于「${dup.group.name}」`);
-        err.code = 'duplicate';
-        err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
-        throw err;
-      }
+  // 摘录沿用同一防重复策略：命中直接跳过，不弹确认，也不提供破例添加。
+  const settings = await Storage.loadSettings();
+  if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
+    const data = await Storage.load();
+    const dup = Storage.findDuplicateCard(data, input);
+    if (dup) {
+      const err = new Error(`该摘录已存在于「${dup.group.name}」`);
+      err.code = 'duplicate';
+      err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+      throw err;
     }
   }
 
@@ -377,15 +373,27 @@ chrome.windows.onRemoved.addListener((windowId) => {
 // 侧边栏；Chromium 不会为 _execute_action 派发 onCommand，因此这里不监听它，
 // 也就不会与浏览器默认行为重复触发导致面板打开两次。旧的 toggle-side-panel 命令
 // 已删除（与图标行为合并），用户为其自定义的绑定会随之失效，属预期行为。
+// 防重复命中时的统一非阻塞提示（快捷键路径用；侧边栏/窗口由 app.js 展示同一句）。
+function duplicateSkipMessage(e, isSelection) {
+  const name = (e && e.duplicate && e.duplicate.groupName) || '其他分组';
+  return isSelection
+    ? `该摘录已在「${name}」分组中，已跳过`
+    : `已在「${name}」分组中，已跳过`;
+}
+
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'add-current-page') {
     addCurrentPage()
       .then(() => notifyUI({ type: 'success', message: '已加入当前分组' }))
-      .catch((e) => notifyUI({ type: 'error', message: e.message }));
+      .catch((e) => notifyUI(e.code === 'duplicate'
+        ? { type: 'info', message: duplicateSkipMessage(e, false) }
+        : { type: 'error', message: e.message }));
   } else if (command === 'save-selection') {
     saveSelection()
       .then(() => notifyUI({ type: 'success', message: '摘录已保存' }))
-      .catch((e) => notifyUI({ type: 'error', message: e.message }));
+      .catch((e) => notifyUI(e.code === 'duplicate'
+        ? { type: 'info', message: duplicateSkipMessage(e, true) }
+        : { type: 'error', message: e.message }));
   } else if (command === 'open-management-window') {
     openManagementWindow();
   }
@@ -397,7 +405,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg.type) {
     case 'add-current-page':
-      addCurrentPage({ force: !!msg.force })
+      addCurrentPage()
         .then(() => sendResponse({ ok: true, result: { message: '已加入当前分组' } }))
         .catch((e) => sendResponse({
           ok: false,
@@ -407,7 +415,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }));
       return true;
     case 'save-selection':
-      saveSelection({ force: !!msg.force })
+      saveSelection()
         .then((len) => sendResponse({ ok: true, result: { message: `摘录已保存（${len} 字）` } }))
         .catch((e) => sendResponse({
           ok: false,
