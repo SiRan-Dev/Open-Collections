@@ -176,6 +176,29 @@
     });
   }
 
+  // 串行化所有「读取 → 修改 → 写回」操作：同上下文用本地队列兜底，
+  // 支持 Web Locks 的上下文（扩展页面 / Service Worker）再跨上下文共享同一把锁，
+  // 避免两个窗口或后台同步并发写时后者覆盖前者的新增数据。
+  let localWriteChain = Promise.resolve();
+  function withWriteLock(task) {
+    const run = () => {
+      const nav = typeof navigator !== 'undefined' ? navigator : null;
+      if (nav && nav.locks && typeof nav.locks.request === 'function') {
+        return Promise.resolve(nav.locks.request('openpocket:storage-write', () => Promise.resolve().then(task)));
+      }
+      return Promise.resolve().then(task);
+    };
+    const result = localWriteChain.then(run, run);
+    localWriteChain = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  function locked(fn) {
+    return function (...args) {
+      return withWriteLock(() => fn.apply(null, args));
+    };
+  }
+
   // 对外 API
   const Storage = {};
 
@@ -188,19 +211,20 @@
     return normalize(raw);
   };
 
-  Storage.save = async function (data) {
+  Storage.save = locked(async function (data) {
     const normalized = normalize(data);
     await saveRaw(normalized);
     return normalized;
-  };
+  });
 
   // 在事务回调里拿到可变 data，返回后自动保存。
-  Storage.mutate = async function (mutator) {
+  // 内部直接写盘，避免与 save 的锁嵌套（Web Locks 不可重入）。
+  Storage.mutate = locked(async function (mutator) {
     const data = await Storage.load();
     const result = await mutator(data);
-    await Storage.save(data);
+    await saveRaw(normalize(data));
     return result === undefined ? data : result;
-  };
+  });
 
   // ---- 分组操作 ----
   Storage.createGroup = async function (name, color, options) {
@@ -705,12 +729,14 @@
     }
 
     if (!merge) {
-      // 覆盖：先做本地备份再写入。
-      await Storage.createBackup('import-overwrite');
-      const fresh = normalize({ groups: incoming.groups, activeGroupId: null });
-      fresh.activeGroupId = fresh.groups[0] ? fresh.groups[0].id : null;
-      await Storage.save(fresh);
-      return { groups: fresh.groups.length };
+      // 覆盖：先做本地备份再写入；整段持锁，避免与并发的卡片写入互相覆盖。
+      return withWriteLock(async () => {
+        await Storage.createBackup('import-overwrite');
+        const fresh = normalize({ groups: incoming.groups, activeGroupId: null });
+        fresh.activeGroupId = fresh.groups[0] ? fresh.groups[0].id : null;
+        await saveRaw(normalize(fresh));
+        return { groups: fresh.groups.length };
+      });
     }
 
     // 合并：按 id 合并分组与卡片，冲突时取 updatedAt 较新者。
@@ -967,7 +993,7 @@
 
   // 合并写入，避免只保存某一个配置段时清空其他配置。
   // 敏感字段：写入前用免密保险库密钥加密，明文字段绝不落盘；全程无感，无需密码。
-  Storage.updateSettings = async function (patch) {
+  Storage.updateSettings = locked(async function (patch) {
     const current = await Storage.loadSettings();
     const p = patch && typeof patch === 'object' ? patch : {};
     const next = normalizeSettings({
@@ -1028,7 +1054,7 @@
     if (metaChanged) await saveSettingsMeta(meta);
     await writeSettings(next);
     return next;
-  };
+  });
 
   // ---- 设置同步：键级 last-writer-wins（凭据与保险库密钥永不参与）----
   const SETTINGS_META_KEY = 'openpocket:settings-meta';
@@ -1097,7 +1123,7 @@
 
   // 合并远端设置：按每个键的最后修改时间取新；force（仅下载）时远端全量覆盖。
   // 不触碰凭据、secrets 与保险库。返回 { changed: string[] }。
-  Storage.applySyncedSettings = async function (remoteSettings, remoteKeys, options) {
+  Storage.applySyncedSettings = locked(async function (remoteSettings, remoteKeys, options) {
     const force = !!(options && options.force);
     const local = await Storage.loadSettings();
     const meta = await loadSettingsMeta();
@@ -1125,7 +1151,7 @@
     await writeSettings(normalizeSettings(next));
     await saveSettingsMeta(meta);
     return { changed };
-  };
+  });
 
   // 读取并解密全部敏感字段；只在调用方即将使用时临时解密。
   Storage.loadSecrets = async function () {
@@ -1166,7 +1192,7 @@
   };
 
   // 旧版明文（无 security 段的早期版本）静默迁移到保险库加密；失败回滚，不丢数据。
-  async function migratePlaintextSecrets() {
+  const migratePlaintextSecrets = locked(async function () {
     const settings = await Storage.loadSettings();
     if (settings.secretsV === 1 || !hasPlaintextSecrets(settings)) return settings;
     const key = await Vault.ensureKey();
@@ -1183,12 +1209,12 @@
     });
     await writeSettings(next);
     return next;
-  }
+  });
   Storage.migratePlaintextSecrets = migratePlaintextSecrets;
 
   // 旧版主密码数据的一次性迁移：输入旧密码 → 解出明文 → 立即用保险库密钥重封装。
   // 原子写入；失败时旧密文原样保留，可重试，绝不丢数据。
-  Storage.migrateLegacySecrets = async function (password) {
+  Storage.migrateLegacySecrets = locked(async function (password) {
     const settings = await Storage.loadSettings();
     if (!settings.security || !settings.security.enabled) {
       return { migrated: false, reason: 'no-legacy' };
@@ -1213,7 +1239,7 @@
     });
     await writeSettings(next);
     return { migrated: true, count: Object.keys(secrets).length };
-  };
+  });
 
   // 是否需要旧版迁移（设置页据此显示一次性迁移卡片）。
   Storage.needsLegacyMigration = async function () {
@@ -1223,7 +1249,7 @@
 
   // 清除本地密钥：丢弃保险库并删除全部已加密凭据（凭据需重新填写，不可逆）。
   // 旧版主密码残留数据也一并清除（不再需要旧密码）。
-  Storage.clearVaultAndSecrets = async function () {
+  Storage.clearVaultAndSecrets = locked(async function () {
     const settings = await Storage.loadSettings();
     const next = normalizeSettings({
       ...settings,
@@ -1235,7 +1261,7 @@
     await writeSettings(next);
     await Vault.clear();
     return next;
-  };
+  });
 
   Storage.saveSettings = async function (settings) {
     return Storage.updateSettings(settings);
@@ -1347,7 +1373,7 @@
   };
 
   // entries: [{ key, category }]
-  Storage.saveAiCacheEntries = async function (entries) {
+  Storage.saveAiCacheEntries = locked(async function (entries) {
     if (!Array.isArray(entries) || !entries.length) return;
     const cache = await Storage.loadAiCache();
     const now = Utils.now();
@@ -1366,13 +1392,13 @@
         else resolve();
       });
     });
-  };
+  });
 
-  Storage.clearAiCache = async function () {
+  Storage.clearAiCache = locked(async function () {
     return new Promise((resolve) => {
       chrome.storage.local.remove(AI_CACHE_KEY, () => resolve());
     });
-  };
+  });
 
   // ---- 同步合并（供 webdav.js 使用）----
   // 把远端数据与本地数据按 lastModified 合并，返回合并结果。
@@ -1504,7 +1530,7 @@
   };
 
   // 覆盖写分类缓存（同步用），按时间裁剪到上限。
-  Storage.saveAiCacheRaw = async function (cache) {
+  Storage.saveAiCacheRaw = locked(async function (cache) {
     const entries = Object.entries(cache && typeof cache === 'object' ? cache : {});
     entries.sort((a, b) => ((b[1] && b[1].t) || 0) - ((a[1] && a[1].t) || 0));
     const out = {};
@@ -1517,7 +1543,7 @@
         else resolve();
       });
     });
-  };
+  });
 
   // ---- 设置导出 / 导入（阶段三）----
   const SETTINGS_EXPORT_SCHEMA = 1;
@@ -1615,7 +1641,7 @@
 
   // 应用导入的设置：mode='merge' 只写文件中出现的键；'overwrite' 额外把未出现的键恢复默认。
   // 应用前写设置专用备份（含同步时间戳，可完整回滚）；写入键并更新同步时间戳，便于后续 WebDAV 传播。
-  Storage.applySettingsExport = async function (incomingSettings, mode) {
+  Storage.applySettingsExport = locked(async function (incomingSettings, mode) {
     const local = await Storage.loadSettings();
     const localMeta = await loadSettingsMeta();
     const backupKey = BACKUP_PREFIX + Date.now() + '-settings-import-' + Math.random().toString(36).slice(2, 8);
@@ -1660,10 +1686,10 @@
     await writeSettings(normalizeSettings(next));
     await saveSettingsMeta(meta);
     return { backupKey, applied };
-  };
+  });
 
   // 回滚设置导入：从设置专用备份恢复完整设置与同步时间戳。
-  Storage.restoreSettingsBackup = async function (key) {
+  Storage.restoreSettingsBackup = locked(async function (key) {
     const raw = await new Promise((resolve) => {
       chrome.storage.local.get(key, (items) => resolve(items && items[key]));
     });
@@ -1673,7 +1699,7 @@
     await writeSettings(normalizeSettings(raw.settings));
     if (raw.meta) await saveSettingsMeta(raw.meta);
     return true;
-  };
+  });
 
   global.Storage = Storage;
 })(typeof self !== 'undefined' ? self : this);
