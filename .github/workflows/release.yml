@@ -1,0 +1,203 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  # 手动触发：只构建与自检，不创建/更新 Release（用于上线前干跑）
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '干跑使用的版本号（留空则读取 manifest.json）'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          manifest="$(node -p "require('./manifest.json').version")"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ -z "${INPUT_VERSION}" ]]; then
+              version="${manifest}"
+            else
+              version="${INPUT_VERSION#v}"
+            fi
+            echo "Dry run, requested version: ${version} (manifest ${manifest})"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ "${version}" != "${manifest}" ]]; then
+            echo "::error::manifest version ${manifest} does not match tag v${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "manifest version ${manifest} matches tag v${version}"
+
+      - name: Build package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/package"
+          rm -rf "${stage}" dist
+          mkdir -p "${stage}/icons" dist
+          # 只放入运行扩展所需的文件，排除 docs/tools/tests/store-assets/.screenshots/.github/dist/node_modules 等
+          cp manifest.json background.js management.html management.css README.md LICENSE "${stage}/"
+          cp -r js "${stage}/"
+          cp icons/icon16.png icons/icon32.png icons/icon48.png icons/icon128.png "${stage}/icons/"
+          # 在 stage 目录内打包，确保所有文件位于 zip 根目录，不额外套一层目录
+          (
+            cd "${stage}"
+            zip -q -r "${GITHUB_WORKSPACE}/dist/open-collections-${VERSION}.zip" \
+              manifest.json background.js management.html management.css README.md LICENSE js icons
+          )
+          echo "Built dist/open-collections-${VERSION}.zip"
+          ls -l "dist/open-collections-${VERSION}.zip"
+
+      - name: Verify package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip="dist/open-collections-${VERSION}.zip"
+          out="${RUNNER_TEMP}/extract"
+          rm -rf "${out}"
+          mkdir -p "${out}"
+          unzip -q "${zip}" -d "${out}"
+          cd "${out}"
+          node - <<'NODE'
+          const fs = require('fs');
+          const missing = [];
+          const need = (p, why) => { if (!p) missing.push(`(empty path) ${why}`); else if (!fs.existsSync(p)) missing.push(`${p} (${why})`); };
+
+          const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+          if (manifest.icons) Object.values(manifest.icons).forEach(p => need(p, 'manifest.icons'));
+          if (manifest.action && manifest.action.default_icon) Object.values(manifest.action.default_icon).forEach(p => need(p, 'manifest.action.default_icon'));
+          if (manifest.side_panel) need(manifest.side_panel.default_path, 'manifest.side_panel.default_path');
+          if (manifest.background) need(manifest.background.service_worker, 'manifest.background.service_worker');
+
+          const html = fs.readFileSync('management.html', 'utf8');
+          const attr = /(?:src|href)\s*=\s*"([^"]+)"/g;
+          for (const m of html.matchAll(attr)) {
+            const ref = m[1].trim();
+            if (/^(https?:|data:|#|\/\/)/.test(ref)) continue;
+            need(ref.replace(/^\.?\//, ''), 'management.html reference');
+          }
+
+          const bg = fs.readFileSync('background.js', 'utf8');
+          const si = /importScripts\s*\(([^)]*)\)/g;
+          for (const m of bg.matchAll(si)) {
+            for (const q of m[1].matchAll(/'([^']+)'/g)) need(q[1], 'importScripts');
+          }
+
+          if (missing.length) {
+            console.error('Missing files:');
+            missing.forEach(x => console.error(' - ' + x));
+            process.exit(1);
+          }
+          console.log('Reference check passed (manifest / html / importScripts)');
+          NODE
+          echo "--- JS syntax ---"
+          count=0
+          while IFS= read -r -d '' f; do
+            node --check "$f"
+            count=$((count + 1))
+          done < <(find . -type f -name '*.js' -print0)
+          echo "node --check passed for ${count} files"
+          echo "--- root layout ---"
+          top="$(ls -1 | sort | tr '\n' ' ')"
+          echo "top-level entries: ${top}"
+          if [[ ! -f manifest.json ]]; then
+            echo "::error::manifest.json is not at the archive root"
+            exit 1
+          fi
+          if [[ ! -d js || ! -d icons ]]; then
+            echo "::error::js/ or icons/ missing at the archive root"
+            exit 1
+          fi
+          echo "file count: $(find . -type f | wc -l)"
+
+      - name: Write checksum
+        id: checksum
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip="dist/open-collections-${VERSION}.zip"
+          hash="$(sha256sum "${zip}" | cut -d' ' -f1)"
+          # 与历史资产保持一致：<hash>  <文件名>，无尾随换行
+          printf '%s  open-collections-%s.zip' "${hash}" "${VERSION}" > "${zip}.sha256"
+          echo "sha256=${hash}" >> "${GITHUB_OUTPUT}"
+          cat "${zip}.sha256"
+          echo
+
+      - name: Publish release
+        id: publish
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          zip="dist/open-collections-${VERSION}.zip"
+          sums="${zip}.sha256"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "Release ${tag} exists, overwriting assets"
+            gh release upload "${tag}" "${zip}" "${sums}" --clobber
+          else
+            gh release create "${tag}" "${zip}" "${sums}" --verify-tag --title "${tag}" --generate-notes
+          fi
+          url="$(gh release view "${tag}" --json url --jq .url)"
+          echo "release_url=${url}" >> "${GITHUB_OUTPUT}"
+          echo "Published ${url}"
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          HASH: ${{ steps.checksum.outputs.sha256 }}
+          RELEASE_URL: ${{ steps.publish.outputs.release_url }}
+        run: |
+          {
+            echo "## Release v${VERSION}"
+            echo
+            if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+              echo "- 触发方式：tag push（\`${GITHUB_REF_NAME}\`）"
+              echo "- Release：${RELEASE_URL:-（未生成）}"
+            else
+              echo "- 触发方式：workflow_dispatch 干跑（未发布 Release）"
+            fi
+            echo "- 包大小：$(stat -c%s "dist/open-collections-${VERSION}.zip" 2>/dev/null || echo '（未构建）') 字节"
+            echo "- SHA256：${HASH:-（未生成）}"
+            echo
+            echo "### 包内文件"
+            echo '```'
+            unzip -l "dist/open-collections-${VERSION}.zip" 2>/dev/null | sed -n '4,$p' | head -n -2 || true
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
