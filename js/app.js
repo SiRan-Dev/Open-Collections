@@ -2796,6 +2796,9 @@
     if (uiScene === 'standalone') {
       document.body.classList.add('standalone-window');
     }
+    // 「在独立窗口打开」只在侧边栏场景有意义：独立窗口内隐藏（display:none，不占位）。
+    const openWindowBtn = $('btn-window');
+    if (openWindowBtn) openWindowBtn.classList.toggle('hidden', uiScene === 'standalone');
     Storage.loadFoldState()
       .then((state2) => {
         const stored = state2 && typeof state2[uiScene] === 'boolean' ? state2[uiScene] : null;
