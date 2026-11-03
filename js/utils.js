@@ -4,6 +4,9 @@
 
   const Utils = {};
 
+  // AI 默认可编辑的粗分类表；「其他」始终作为兜底保留。
+  Utils.DEFAULT_AI_CATEGORIES = ['开发编程', '学习', '娱乐', '生活', '资讯', '其他'];
+
   const pad2 = (n) => String(n).padStart(2, '0');
 
   // 生成足够随机的 ID（不依赖 crypto.randomUUID 以兼容旧环境，但优先使用）。
@@ -134,6 +137,34 @@
   // 判断是否为 http(s) URL。
   Utils.isHttpUrl = function (url) {
     return /^https?:\/\//i.test(String(url || ''));
+  };
+
+  // 规范化分组/分类名：忽略大小写、空格与常见分隔符，用于同名复用。
+  Utils.normalizeName = function (name) {
+    const n = String(name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s·•\-_/\\（）()【】\[\]：:]/g, '');
+    return n === '其它' ? '其他' : n;
+  };
+
+  // 规范化分类表：去重、最多 12 个，并保证存在「其他」作为兜底。
+  Utils.normalizeCategories = function (list) {
+    const out = [];
+    const seen = new Set();
+    for (const item of (Array.isArray(list) ? list : [])) {
+      const name = String(item || '').trim();
+      if (!name) continue;
+      const key = Utils.normalizeName(name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(key === '其他' ? '其他' : name);
+    }
+    if (out.length && !out.some((c) => Utils.normalizeName(c) === '其他')) {
+      if (out.length >= 12) out.splice(11);
+      out.push('其他');
+    }
+    return out.slice(0, 12);
   };
 
   // 生成带 ID 的分组默认名。

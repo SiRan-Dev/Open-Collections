@@ -74,7 +74,7 @@
     </span>
     <h1>Open Collections 隐私政策</h1>
   </header>
-  <p class="updated">最后更新：2026-11-02 · 适用于 Open Collections 浏览器扩展</p>
+  <p class="updated">最后更新：2026-11-03 · 适用于 Open Collections 浏览器扩展</p>
 
   <p>Open Collections（以下简称「本扩展」）是一个本地网页收藏工具。本政策说明本扩展会处理哪些信息、信息存放在哪里，以及会与谁共享。</p>
 
@@ -87,8 +87,9 @@
     <li>你收藏的网页：标题、网址、站点图标、收藏时间</li>
     <li>你保存的摘录：选中文字、来源标题与网址</li>
     <li>你填写的笔记、分组名称与颜色</li>
-    <li>扩展设置，包括启用 WebDAV 时填写的服务器地址、用户名与密码，以及启用 AI 整理时填写的接口地址、API Key 与模型名称</li>
-  </ul>
+    <li>扩展设置，包括启用 WebDAV 时填写的服务器地址、用户名与密码，以及启用 AI 整理时填写的接口地址、API Key、模型名称与分类表</li>
+    <li>AI 分类缓存（内容哈希与分类结果），仅保存在本机，用于避免重复调用接口</li>
+</ul>
 
   <h2>3. 网络访问</h2>
   <ul>
@@ -139,7 +140,7 @@
   <p>The Extension has no accounts, analytics, advertising SDKs, telemetry, or remote code. The developer receives none of your data, and it is never sold or shared with third parties. Only the WebDAV server or AI endpoint you configure will receive data you explicitly send.</p>
 
   <h3>Information processed locally</h3>
-  <p>Only when you take an action, the Extension processes the following, stored entirely in your browser's local storage (<code>chrome.storage.local</code>): titles, URLs, site icons and timestamps of pages you save; selected text of excerpts and their source title/URL; notes you write; group names and colors; settings including the WebDAV server address, username and password if you enable sync, and the AI endpoint, API key and model name if you enable AI organization.</p>
+  <p>Only when you take an action, the Extension processes the following, stored entirely in your browser's local storage (<code>chrome.storage.local</code>): titles, URLs, site icons and timestamps of pages you save; selected text of excerpts and their source title/URL; notes you write; group names and colors; settings including the WebDAV server address, username and password if you enable sync, and the AI endpoint, API key, model name and category list if you enable AI organization; and a local AI classification cache (content hashes and category results) used to avoid repeated API calls.</p>
 
   <h3>Network access</h3>
   <ul>

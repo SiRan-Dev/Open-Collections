@@ -28,11 +28,14 @@
     ai: {
       baseUrl: '',
       apiKey: '',
-      model: ''
+      model: '',
+      categories: Utils.DEFAULT_AI_CATEGORIES.slice()
     }
   };
 
   const DAILY_GROUP_PREFIX = 'daily-';
+  const AI_CACHE_KEY = 'openpocket:ai-cache';
+  const AI_CACHE_MAX = 2000;
 
   function isSW() {
     return typeof ServiceWorkerGlobalScope !== 'undefined' &&
@@ -329,7 +332,7 @@
     });
   };
 
-  // 应用 AI 整理方案：新建目标分组，把卡片复制过去并在原分组打墓碑。
+  // 应用 AI 整理方案：优先复用规范化同名的已有分组，否则新建；卡片复制后原卡片打墓碑。
   Storage.applyOrganizePlan = async function (plan) {
     plan = plan || {};
     return Storage.mutate((data) => {
@@ -337,11 +340,9 @@
       if (!source) throw new Error('原分组不存在');
       const specs = Array.isArray(plan.groups) ? plan.groups : [];
       const now = Utils.now();
-      const usedNames = new Set(
-        data.groups.filter((g) => !g.deleted).map((g) => g.name.trim().toLowerCase())
-      );
       const baseColorIndex = data.groups.filter((g) => !g.deleted).length;
       const createdGroups = [];
+      const reusedGroups = [];
       let movedCards = 0;
 
       for (let i = 0; i < specs.length; i++) {
@@ -349,32 +350,33 @@
         if (!spec || !Array.isArray(spec.cardIds)) continue;
         const wanted = new Set(spec.cardIds.filter((id) => typeof id === 'string'));
         const cards = source.cards.filter((c) => !c.deleted && wanted.has(c.id));
-        if (cards.length < 2) continue;
+        if (!cards.length) continue;
 
         let name = typeof spec.name === 'string' ? spec.name.trim() : '';
         if (!name) name = '整理 ' + (i + 1);
-        let candidate = name;
-        let suffix = 2;
-        while (usedNames.has(candidate.toLowerCase())) {
-          candidate = name + ' ' + suffix;
-          suffix++;
+        const nameKey = Utils.normalizeName(name);
+
+        // 按规范化名称复用已有分组，不再给同名分组加「 2」后缀。
+        let target = data.groups.find((g) =>
+          !g.deleted && g.id !== source.id && Utils.normalizeName(g.name) === nameKey);
+        const reused = !!target;
+
+        if (!target) {
+          const color = typeof spec.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(spec.color)
+            ? spec.color
+            : Utils.PALETTE[(baseColorIndex + createdGroups.length) % Utils.PALETTE.length];
+          target = {
+            id: Utils.uuid(),
+            name,
+            color,
+            createdAt: now,
+            updatedAt: now,
+            deleted: false,
+            deletedAt: null,
+            cards: []
+          };
+          data.groups.push(target);
         }
-        usedNames.add(candidate.toLowerCase());
-
-        const color = typeof spec.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(spec.color)
-          ? spec.color
-          : Utils.PALETTE[(baseColorIndex + createdGroups.length) % Utils.PALETTE.length];
-
-        const target = {
-          id: Utils.uuid(),
-          name: candidate,
-          color,
-          createdAt: now,
-          updatedAt: now,
-          deleted: false,
-          deletedAt: null,
-          cards: []
-        };
 
         for (const card of cards) {
           const copy = Utils.clone(card);
@@ -388,12 +390,13 @@
           movedCards++;
         }
 
-        data.groups.push(target);
-        createdGroups.push({ id: target.id, name: target.name, count: target.cards.length });
+        target.updatedAt = now;
+        if (reused) reusedGroups.push({ id: target.id, name: target.name, count: cards.length });
+        else createdGroups.push({ id: target.id, name: target.name, count: target.cards.length });
       }
 
       if (movedCards > 0) source.updatedAt = now;
-      return { createdGroups, movedCards };
+      return { createdGroups, reusedGroups, movedCards };
     });
   };
 
@@ -633,10 +636,12 @@
       batchCollectDaily: !!behavior.batchCollectDaily
     };
     const ai = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
+    const categories = Utils.normalizeCategories(ai.categories);
     base.ai = {
       baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl : '',
       apiKey: typeof ai.apiKey === 'string' ? ai.apiKey : '',
-      model: typeof ai.model === 'string' ? ai.model : ''
+      model: typeof ai.model === 'string' ? ai.model : '',
+      categories: categories.length ? categories : DEFAULT_SETTINGS.ai.categories.slice()
     };
     // 保留未知顶层字段，便于后续增加配置段时不丢数据。
     for (const key of Object.keys(raw)) {
@@ -679,6 +684,46 @@
 
   Storage.saveSettings = async function (settings) {
     return Storage.updateSettings(settings);
+  };
+
+  // ---- AI 分类缓存（缓存键 → 分类名），用于节省 token ----
+  Storage.AI_CACHE_KEY = AI_CACHE_KEY;
+
+  Storage.loadAiCache = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(AI_CACHE_KEY, (items) => {
+        const raw = items[AI_CACHE_KEY];
+        resolve(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {});
+      });
+    });
+  };
+
+  // entries: [{ key, category }]
+  Storage.saveAiCacheEntries = async function (entries) {
+    if (!Array.isArray(entries) || !entries.length) return;
+    const cache = await Storage.loadAiCache();
+    const now = Utils.now();
+    for (const e of entries) {
+      if (!e || !e.key || !e.category) continue;
+      cache[e.key] = { c: e.category, t: now };
+    }
+    const keys = Object.keys(cache);
+    if (keys.length > AI_CACHE_MAX) {
+      keys.sort((a, b) => ((cache[a] && cache[a].t) || 0) - ((cache[b] && cache[b].t) || 0));
+      for (const k of keys.slice(0, keys.length - AI_CACHE_MAX)) delete cache[k];
+    }
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [AI_CACHE_KEY]: cache }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+  };
+
+  Storage.clearAiCache = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.remove(AI_CACHE_KEY, () => resolve());
+    });
   };
 
   // ---- 同步合并（供 webdav.js 使用）----

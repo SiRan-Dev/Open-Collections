@@ -12,7 +12,8 @@
     aiGroupId: null,
     aiBackupKey: null,
     aiAbort: null,
-    aiRunId: 0
+    aiRunId: 0,
+    batchCollectDaily: false
   };
 
   // ---- DOM 引用 ----
@@ -148,11 +149,11 @@
     const normal = groups.filter((g) => !Storage.isDailyGroup(g));
 
     if (daily.length) {
-      appendGroupSection('每日标签页');
+      appendGroupSection('收件箱 · 每日标签页');
       daily.forEach(appendGroupItem);
     }
     if (normal.length) {
-      if (daily.length) appendGroupSection('集锦');
+      if (daily.length) appendGroupSection('主题集锦');
       normal.forEach(appendGroupItem);
     }
   }
@@ -161,6 +162,9 @@
     const li = document.createElement('li');
     li.className = 'group-section-label';
     li.textContent = label;
+    li.title = label === '收件箱 · 每日标签页'
+      ? '批量收藏的临时收件箱，按日期分组，等待整理'
+      : '已归类保存的长期主题分组';
     els.groupList.appendChild(li);
   }
 
@@ -196,7 +200,9 @@
     els.groupNameInput.value = g.name;
     els.groupNameInput.dataset.id = g.id;
     const alive = g.cards.filter((c) => !c.deleted).length;
-    els.groupMeta.textContent = `${alive} 个内容 · 创建于 ${Utils.formatTime(g.createdAt)}`;
+    els.groupMeta.textContent = Storage.isDailyGroup(g)
+      ? `${alive} 个内容 · 每日收件箱（临时待整理） · 创建于 ${Utils.formatTime(g.createdAt)}`
+      : `${alive} 个内容 · 主题集锦 · 创建于 ${Utils.formatTime(g.createdAt)}`;
     renderColorPicker(g.color);
   }
 
@@ -237,8 +243,14 @@
       els.emptyDesc.textContent = '换个关键词试试；搜索范围包含标题、URL、笔记与摘录正文，并覆盖所有分组。';
       els.emptyAction.classList.add('hidden');
     } else {
-      els.emptyTitle.textContent = '这个分组还没有内容';
-      els.emptyDesc.textContent = '点击顶部「添加当前页面」，或按 Ctrl+Shift+S 收藏当前网页；选中文字后按 Ctrl+Shift+E 保存摘录。';
+      const g = getActiveGroup();
+      if (g && Storage.isDailyGroup(g)) {
+        els.emptyTitle.textContent = '收件箱是空的';
+        els.emptyDesc.textContent = '批量收藏会按日期收进这里；之后可用「AI 整理」归入主题集锦。';
+      } else {
+        els.emptyTitle.textContent = '这个分组还没有内容';
+        els.emptyDesc.textContent = '点击顶部「添加当前页面」，或按 Ctrl+Shift+S 收藏当前网页；选中文字后按 Ctrl+Shift+E 保存摘录。';
+      }
       els.emptyAction.classList.add('hidden');
     }
   }
@@ -595,7 +607,24 @@
   }
 
   // ---- 批量收藏当前窗口标签页 ----
+  function refreshCollectMenuCopy() {
+    const daily = !!state.batchCollectDaily;
+    const tabsDesc = els.btnCollectTabs.querySelector('.add-menu-desc');
+    const closeDesc = els.btnCollectClose.querySelector('.add-menu-desc');
+    if (tabsDesc) {
+      tabsDesc.textContent = daily
+        ? '收进「收件箱 · 每日标签页」，不关闭标签；跳过固定标签与内部页'
+        : '加入当前分组，不关闭标签；跳过固定标签与内部页';
+    }
+    if (closeDesc) {
+      closeDesc.textContent = daily
+        ? '收进「收件箱 · 每日标签页」后关闭这些标签（含当前页）并留下一个新标签页；固定标签保留'
+        : '收藏后关闭这些标签（含当前页）并留下一个新标签页；固定标签保留';
+    }
+  }
+
   function setAddMenuOpen(open) {
+    if (open) refreshCollectMenuCopy();
     els.addMenu.classList.toggle('hidden', !open);
     els.btnAddMenu.setAttribute('aria-expanded', String(open));
   }
@@ -793,7 +822,12 @@
     $('ai-base-url').value = a.baseUrl || '';
     $('ai-api-key').value = a.apiKey || '';
     $('ai-model').value = a.model || '';
+    $('ai-categories').value = (a.categories && a.categories.length
+      ? a.categories
+      : AI.DEFAULT_CATEGORIES).join('\n');
     state.aiConfig = wdSettings.ai;
+    state.batchCollectDaily = !!b.batchCollectDaily;
+    refreshAiCacheInfo().catch(() => {});
   }
 
   // AI 与收藏行为各自有独立保存按钮，这里只读 WebDAV，避免误覆盖其他配置段。
@@ -849,6 +883,7 @@
     opts = opts || {};
     wdSettings = await Storage.updateSettings(s);
     state.aiConfig = wdSettings.ai;
+    state.batchCollectDaily = !!(wdSettings.behavior && wdSettings.behavior.batchCollectDaily);
     if (opts.reschedule !== false) await sendMessage({ type: 'webdav-reschedule' });
   }
 
@@ -875,11 +910,38 @@
   }
 
   function readAiForm() {
+    let categories = Utils.normalizeCategories($('ai-categories').value.split(/[\n,，、]/));
+    if (!categories.length) categories = AI.DEFAULT_CATEGORIES.slice();
     return {
       baseUrl: $('ai-base-url').value.trim(),
       apiKey: $('ai-api-key').value.trim(),
-      model: $('ai-model').value.trim()
+      model: $('ai-model').value.trim(),
+      categories
     };
+  }
+
+  async function refreshAiCacheInfo() {
+    const cache = await Storage.loadAiCache();
+    const count = Object.keys(cache).length;
+    const info = $('ai-cache-info');
+    const btn = $('btn-ai-cache-clear');
+    if (info) {
+      info.textContent = count
+        ? `本地缓存：${count} 条分类记录，命中时不会重复调用 AI。`
+        : '本地缓存为空。';
+    }
+    if (btn) btn.disabled = count === 0;
+  }
+
+  async function clearAiCache() {
+    if (!confirm('清空 AI 分类缓存？下次整理会重新调用 AI。')) return;
+    try {
+      await Storage.clearAiCache();
+      await refreshAiCacheInfo();
+      setAiStatus('分类缓存已清空', 'success');
+    } catch (e) {
+      setAiStatus('清空缓存失败：' + (e.message || e), 'error');
+    }
   }
 
   async function saveAiSettings() {
@@ -894,6 +956,7 @@
     }
     try {
       await persistSettings({ ai: cfg }, { reschedule: false });
+      $('ai-categories').value = wdSettings.ai.categories.join('\n');
       setAiStatus('设置已保存', 'success');
     } catch (e) {
       setAiStatus('保存失败：' + (e.message || e), 'error');
@@ -921,6 +984,7 @@
     }
     try {
       await persistSettings({ ai: cfg }, { reschedule: false });
+      $('ai-categories').value = wdSettings.ai.categories.join('\n');
       setAiStatus('连接成功 ✓ 设置已保存' + (res.reply ? `（${Utils.truncate(res.reply, 20)}）` : ''), 'success');
     } catch (e) {
       setAiStatus('连接成功，但保存设置失败：' + (e.message || e), 'error');
@@ -1010,6 +1074,13 @@
       head.appendChild(count);
       item.appendChild(head);
 
+      if (g.reuseGroupName) {
+        const reuse = document.createElement('div');
+        reuse.className = 'ai-plan-reason';
+        reuse.textContent = '将并入已有分组「' + g.reuseGroupName + '」';
+        item.appendChild(reuse);
+      }
+
       if (g.reason) {
         const reason = document.createElement('div');
         reason.className = 'ai-plan-reason';
@@ -1038,6 +1109,13 @@
     $('ai-unassigned').textContent = plan.unassignedCount > 0
       ? `${plan.unassignedCount} 条内容将保留在原分组。`
       : '所有内容都已归类。';
+    const stats = $('ai-cache-stats');
+    if (stats) {
+      const dedupe = plan.dedupedCount ? ` / 去重 ${plan.dedupedCount} 条` : '';
+      stats.textContent = plan.apiCalled === false
+        ? `本次未调用 AI / 复用缓存 ${plan.cacheHits || 0} 条`
+        : `本次新增请求 ${plan.requestedCount || 0} 条 / 复用缓存 ${plan.cacheHits || 0} 条${dedupe}`;
+    }
     renderAiState('proposal');
   }
 
@@ -1054,8 +1132,8 @@
       return;
     }
     const cards = group.cards.filter((c) => !c.deleted);
-    if (cards.length < 3) {
-      toast('当前分组至少需要 3 条内容才能整理', 'error');
+    if (cards.length < 2) {
+      toast('当前分组至少需要 2 条内容才能整理', 'error');
       return;
     }
     if (cards.length > AI.MAX_CARDS) {
@@ -1083,29 +1161,49 @@
       openAiDrawer();
       renderAiState('loading');
 
+      const categoryList = cfg.categories && cfg.categories.length
+        ? Utils.normalizeCategories(cfg.categories)
+        : AI.DEFAULT_CATEGORIES.slice();
       const existingNames = state.data.groups
         .filter((g) => !g.deleted)
         .map((g) => g.name);
+      const cache = await Storage.loadAiCache();
+      if (runId !== state.aiRunId) return;
       const plan = await AI.organizeGroup({
         cfg,
         groupName: group.name,
         existingNames,
+        categories: categoryList,
+        cache,
         cards,
         signal: controller.signal
       });
       if (runId !== state.aiRunId) return;
       if (!plan.groups.length) {
-        $('ai-empty-text').textContent = plan.summary || 'AI 没有找到需要拆分的主题，当前分组保持不变。';
+        $('ai-empty-text').textContent = plan.summary || 'AI 没有找到合适的分类，当前分组保持不变。';
         renderAiState('empty');
         return;
       }
 
       const aliveCount = state.data.groups.filter((g) => !g.deleted).length;
       plan.groups.forEach((g, index) => {
-        g.color = Utils.PALETTE[(aliveCount + index) % Utils.PALETTE.length];
+        const existing = state.data.groups.find((x) =>
+          !x.deleted && x.id !== state.aiGroupId &&
+          Utils.normalizeName(x.name) === Utils.normalizeName(g.name));
+        if (existing) {
+          g.color = existing.color;
+          g.reuseGroupName = existing.name;
+        } else {
+          g.color = Utils.PALETTE[(aliveCount + index) % Utils.PALETTE.length];
+        }
       });
       state.aiPlan = plan;
       renderAiPlan(plan);
+      if (plan.cacheEntries && plan.cacheEntries.length) {
+        Storage.saveAiCacheEntries(plan.cacheEntries)
+          .then(() => refreshAiCacheInfo())
+          .catch((e) => console.warn('[OpenCollections] save AI cache failed:', e));
+      }
     } catch (e) {
       if (runId !== state.aiRunId) return;
       if (e.code === 'cancelled') {
@@ -1147,7 +1245,7 @@
       state.aiBackupKey = backupKey;
       await loadAndRender();
       $('ai-applied-text').textContent = res.movedCards
-        ? `已新建 ${res.createdGroups.length} 个分组，移动 ${res.movedCards} 条内容。`
+        ? `已新建 ${res.createdGroups.length} 个、并入 ${res.reusedGroups.length} 个已有分组，移动 ${res.movedCards} 条内容。`
         : '没有可移动的内容，数据可能已变化。';
       renderAiState('applied');
     } catch (e) {
@@ -1272,6 +1370,7 @@
     // AI 自动整理
     $('btn-ai-save').addEventListener('click', saveAiSettings);
     $('btn-ai-test').addEventListener('click', testAiConnection);
+    $('btn-ai-cache-clear').addEventListener('click', clearAiCache);
     $('btn-ai-abort').addEventListener('click', closeAiDrawer);
     $('btn-ai-empty-close').addEventListener('click', closeAiDrawer);
     $('btn-ai-error-close').addEventListener('click', closeAiDrawer);
@@ -1322,7 +1421,11 @@
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes[Storage.SETTINGS_KEY]) {
         Storage.loadSettings()
-          .then((s) => { state.aiConfig = s.ai; })
+          .then((s) => {
+            state.aiConfig = s.ai;
+            state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
+            refreshCollectMenuCopy();
+          })
           .catch(() => {});
       }
       if (area === 'local' && (changes[Storage.STORAGE_KEY] || changes[Storage.SETTINGS_KEY])) {
@@ -1343,8 +1446,12 @@
     setGroupsFolded(NARROW_QUERY.matches);
     bindEvents();
     Storage.loadSettings()
-      .then((s) => { state.aiConfig = s.ai; })
-      .catch((e) => console.warn('[OpenCollections] load AI settings failed:', e));
+      .then((s) => {
+        state.aiConfig = s.ai;
+        state.batchCollectDaily = !!(s.behavior && s.behavior.batchCollectDaily);
+        refreshCollectMenuCopy();
+      })
+      .catch((e) => console.warn('[OpenCollections] load settings failed:', e));
     loadAndRender();
   }
 

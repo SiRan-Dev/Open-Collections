@@ -90,7 +90,7 @@
             <span id="group-color-dot" class="group-color-dot"></span>
             <input id="group-name-input" class="group-name-input" type="text" maxlength="40" />
             <div class="group-actions">
-              <button id="btn-ai-organize" class="btn btn-ghost btn-sm" title="用 AI 整理当前分组">
+              <button id="btn-ai-organize" class="btn btn-ghost btn-sm" title="用 AI 将当前内容归入主题集锦">
                 <svg class="ico" aria-hidden="true"><use href="#i-sparkles"/></svg>AI 整理
               </button>
               <button id="btn-open-all" class="btn btn-ghost btn-sm" title="在新标签页批量打开本分组">全部打开</button>
@@ -148,10 +148,10 @@
           <div class="form-row form-inline">
             <label class="checkbox-label">
               <input id="behavior-batch-daily" type="checkbox" />
-              <span>批量收藏时收进「每日标签页」</span>
+              <span>批量收藏时收进「每日收件箱」</span>
             </label>
           </div>
-          <p class="hint">收藏本窗口标签页时，不再加入当前分组，而是按本地日期归组；当天多次收藏会追加到同一组。单页收藏与摘录不受影响。</p>
+          <p class="hint">开启后，批量收藏按本地日期收进「收件箱 · 每日标签页」，当天多次收藏合并到同一组；之后可用「AI 整理」归入主题集锦。单页收藏与摘录仍进当前分组。</p>
           <div class="settings-actions">
             <button id="btn-behavior-save" class="btn btn-primary">保存设置</button>
           </div>
@@ -232,11 +232,19 @@
             <input id="ai-model" class="text-input" type="text" autocomplete="off"
               placeholder="例如 deepseek-chat、gpt-4o-mini" />
           </div>
+          <div class="form-row">
+            <label>分类表（每行一个，最多 12 个）</label>
+            <textarea id="ai-categories" class="text-input" rows="6"></textarea>
+          </div>
+          <p class="hint">AI 只能从这些分类中选择；「其他」始终保留作为兜底，表外结果会归入其中，已有同名主题集锦会直接复用。</p>
+          <p class="hint">分类表变化会使旧缓存失效；命中缓存的条目不会再次发送给 AI。</p>
           <div class="settings-actions">
             <button id="btn-ai-save" class="btn btn-primary">保存设置</button>
             <button id="btn-ai-test" class="btn btn-ghost">测试连接</button>
+            <button id="btn-ai-cache-clear" class="btn btn-ghost" disabled>清空分类缓存</button>
           </div>
           <div id="ai-status" class="wd-status"></div>
+          <p id="ai-cache-info" class="hint"></p>
         </section>
 
         <section class="settings-section">
@@ -312,6 +320,7 @@
         <div id="ai-error" class="ai-state hidden">
           <svg class="error-icon" aria-hidden="true"><use href="#i-alert"/></svg>
           <div id="ai-error-msg" class="error-msg"></div>
+          <p class="hint">未修改任何内容；可重试，或先关闭后手动整理。</p>
           <div class="settings-actions">
             <button id="btn-ai-retry" class="btn btn-primary">重试</button>
             <button id="btn-ai-error-close" class="btn btn-ghost">关闭</button>
@@ -320,6 +329,7 @@
 
         <div id="ai-proposal" class="ai-state hidden">
           <p id="ai-summary" class="ai-summary"></p>
+          <p id="ai-cache-stats" class="hint"></p>
           <div id="ai-plan-list" class="ai-plan-list"></div>
           <p id="ai-unassigned" class="hint"></p>
           <div class="settings-actions">
