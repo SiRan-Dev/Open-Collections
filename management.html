@@ -46,6 +46,10 @@
             <svg class="ico" aria-hidden="true"><use href="#i-chevron-down"/></svg>
           </button>
         </div>
+        <button id="btn-standalone-collect" class="btn btn-primary hidden"
+          title="把最近活跃浏览器窗口的网页标签收进当前分组并关闭">
+          <svg class="ico" aria-hidden="true"><use href="#i-app-window"/></svg><span class="label">收藏并关闭标签页</span>
+        </button>
         <button id="btn-save-sel" class="btn btn-ghost" title="保存选中文字为摘录">
           <svg class="ico" aria-hidden="true"><use href="#i-quote"/></svg><span class="label">摘录</span>
         </button>
@@ -561,6 +565,25 @@
         <div class="settings-actions">
           <button id="btn-consent-confirm" class="btn btn-primary">确认启用</button>
           <button id="btn-consent-cancel" class="btn btn-ghost">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 独立窗口：多浏览器窗口时的选择器 -->
+  <div id="window-picker" class="drawer hidden">
+    <div class="drawer-mask" data-close="window-picker"></div>
+    <div class="drawer-panel narrow">
+      <div class="drawer-head">
+        <h2>选择要收藏的窗口</h2>
+        <button class="btn-icon" data-close="window-picker" aria-label="关闭窗口选择"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="drawer-body">
+        <div id="window-picker-list" class="dedupe-list"></div>
+        <p class="hint">默认选中最近活跃的窗口；固定标签与浏览器内部页会被跳过。</p>
+        <div class="settings-actions">
+          <button id="btn-window-picker-ok" class="btn btn-primary">收藏并关闭选中窗口的标签页</button>
+          <button id="btn-window-picker-cancel" class="btn btn-ghost">取消</button>
         </div>
       </div>
     </div>

@@ -1038,97 +1038,174 @@
 
       const win = await getCollectWindow();
       if (!win) throw new Error('无法获取当前窗口的标签页');
-
-      const targets = (win.tabs || []).filter(isCollectibleTab);
-      if (!targets.length) throw new Error('当前窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
-
-      let items = targets.map((tab) => ({
-        tab,
-        input: {
-          type: 'page',
-          title: tab.title || tab.url,
-          url: tab.url,
-          favicon: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(tab.url)}&size=32`
-        }
-      }));
-
-      // 默认按规范化 URL 跨分组查重；命中时明确提示并让用户选择「仍然添加」或跳过。
-      let skippedDuplicates = 0;
-      if (!state.allowDuplicateLinks) {
-        const data = await Storage.load();
-        const seenKeys = new Set();
-        const duplicateIndexes = new Map();
-        items.forEach((item, index) => {
-          const key = Utils.cardDedupeKey(item.input);
-          if (!key) return;
-          const existing = Storage.findDuplicateCard(data, item.input);
-          const where = existing ? existing.group.name : (seenKeys.has(key) ? '本窗口其他标签页' : '');
-          if (where) duplicateIndexes.set(index, where);
-          seenKeys.add(key);
-        });
-        if (duplicateIndexes.size) {
-          const list = Array.from(duplicateIndexes.entries());
-          const lines = list.slice(0, 5)
-            .map(([index, where]) => `• ${items[index].input.title} → 「${where}」`)
-            .join('\n');
-          const more = list.length > 5 ? `\n…等 ${list.length} 条` : '';
-          const stillAdd = confirm(
-            `检测到 ${list.length} 个重复链接：\n${lines}${more}\n\n` +
-            `确定 = 仍然全部添加；取消 = 跳过重复，只添加其余 ${items.length - list.length} 条`
-          );
-          if (!stillAdd) {
-            skippedDuplicates = list.length;
-            items = items.filter((item, index) => !duplicateIndexes.has(index));
-            if (!items.length) {
-              toast('已跳过全部重复链接，未添加任何标签页', 'info');
-              return;
-            }
-          }
-        }
-      }
-
-      const cardInputs = items.map((item) => item.input);
-      let targetGroup;
-      let created = false;
-      let revived = false;
-      if (oneTabMode) {
-        const res = await Storage.addCardsToDailyGroup(Utils.dateKey(Utils.now()), cardInputs);
-        targetGroup = res.group;
-        created = res.created;
-        revived = res.revived;
-      } else {
-        await Storage.addCards(activeGroup.id, cardInputs);
-        targetGroup = activeGroup;
-      }
-
-      let closed = 0;
-      if (closeAfter) {
-        // 先开一个新标签页接管窗口（侧边栏跟随窗口而非标签），
-        // 再关闭全部已收藏标签，包括当前页。被跳过的重复标签保持打开。
-        await chrome.tabs.create({ active: true });
-        const ids = items.map((item) => item.tab.id);
-        if (ids.length) {
-          await chrome.tabs.remove(ids);
-          closed = ids.length;
-        }
-      }
-
-      const skipNote = skippedDuplicates ? `，跳过 ${skippedDuplicates} 个重复链接` : '';
-      if (closeAfter) {
-        toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}`, 'success');
-      } else if (oneTabMode && created) {
-        toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
-      } else if (oneTabMode && revived) {
-        toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
-      } else if (oneTabMode) {
-        toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}`, 'success');
-      } else {
-        toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}`, 'success');
-      }
-      await loadAndRender();
+      await collectTabsFromWindow(win, closeAfter);
     } catch (e) {
       toast(e.message, 'error');
     }
+  }
+
+  // 批量收藏核心：对指定窗口做去重确认 → 写入 → （可选）关闭已收藏标签。
+  // 写入失败时不会关闭任何标签。
+  async function collectTabsFromWindow(win, closeAfter) {
+    const settings = await Storage.loadSettings();
+    const oneTabMode = !!(settings.behavior && settings.behavior.batchCollectDaily);
+    const activeGroup = getActiveGroup();
+    if (!oneTabMode && !activeGroup) throw new Error('请先创建一个分组');
+
+    const targets = (win.tabs || []).filter(isCollectibleTab);
+    if (!targets.length) throw new Error('该窗口没有可收藏的网页标签页（固定标签与浏览器内部页不计入）');
+
+    let items = targets.map((tab) => ({
+      tab,
+      input: {
+        type: 'page',
+        title: tab.title || tab.url,
+        url: tab.url,
+        favicon: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(tab.url)}&size=32`
+      }
+    }));
+
+    // 默认按规范化 URL 跨分组查重；命中时明确提示并让用户选择「仍然添加」或跳过。
+    let skippedDuplicates = 0;
+    if (!state.allowDuplicateLinks) {
+      const data = await Storage.load();
+      const seenKeys = new Set();
+      const duplicateIndexes = new Map();
+      items.forEach((item, index) => {
+        const key = Utils.cardDedupeKey(item.input);
+        if (!key) return;
+        const existing = Storage.findDuplicateCard(data, item.input);
+        const where = existing ? existing.group.name : (seenKeys.has(key) ? '本窗口其他标签页' : '');
+        if (where) duplicateIndexes.set(index, where);
+        seenKeys.add(key);
+      });
+      if (duplicateIndexes.size) {
+        const list = Array.from(duplicateIndexes.entries());
+        const lines = list.slice(0, 5)
+          .map(([index, where]) => `• ${items[index].input.title} → 「${where}」`)
+          .join('\n');
+        const more = list.length > 5 ? `\n…等 ${list.length} 条` : '';
+        const stillAdd = confirm(
+          `检测到 ${list.length} 个重复链接：\n${lines}${more}\n\n` +
+          `确定 = 仍然全部添加；取消 = 跳过重复，只添加其余 ${items.length - list.length} 条`
+        );
+        if (!stillAdd) {
+          skippedDuplicates = list.length;
+          items = items.filter((item, index) => !duplicateIndexes.has(index));
+          if (!items.length) {
+            toast('已跳过全部重复链接，未添加任何标签页', 'info');
+            return;
+          }
+        }
+      }
+    }
+
+    const cardInputs = items.map((item) => item.input);
+    let targetGroup;
+    let created = false;
+    let revived = false;
+    if (oneTabMode) {
+      const res = await Storage.addCardsToDailyGroup(Utils.dateKey(Utils.now()), cardInputs);
+      targetGroup = res.group;
+      created = res.created;
+      revived = res.revived;
+    } else {
+      await Storage.addCards(activeGroup.id, cardInputs);
+      targetGroup = activeGroup;
+    }
+
+    let closed = 0;
+    if (closeAfter) {
+      // 先开一个新标签页接管窗口（侧边栏跟随窗口而非标签），
+      // 再关闭全部已收藏标签，包括当前页。被跳过的重复标签保持打开。
+      await chrome.tabs.create({ active: true });
+      const ids = items.map((item) => item.tab.id);
+      if (ids.length) {
+        await chrome.tabs.remove(ids);
+        closed = ids.length;
+      }
+    }
+
+    const skipNote = skippedDuplicates ? `，跳过 ${skippedDuplicates} 个重复链接` : '';
+    if (closeAfter) {
+      toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}`, 'success');
+    } else if (oneTabMode && created) {
+      toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
+    } else if (oneTabMode && revived) {
+      toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}`, 'success');
+    } else if (oneTabMode) {
+      toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}`, 'success');
+    } else {
+      toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}`, 'success');
+    }
+    await loadAndRender();
+  }
+
+  // ---- 独立窗口：单一「收藏并关闭标签页」入口 ----
+  // 目标是「最近活跃的普通浏览器窗口」；有多个普通窗口时先弹选择器，单窗口时给确认提示。
+  async function standaloneCollectAndClose() {
+    try {
+      const res = await sendMessage({ type: 'get-recent-normal-window' });
+      const recentId = res && res.ok ? res.windowId : null;
+      const allWins = await chrome.windows.getAll({ populate: true });
+      const normalWins = (allWins || []).filter((w) => w.type === 'normal' && Array.isArray(w.tabs));
+      if (!normalWins.length) {
+        toast('请先在浏览器中打开网页', 'error');
+        return;
+      }
+      let target;
+      if (normalWins.length > 1) {
+        target = await pickWindow(normalWins, recentId);
+        if (!target) return; // 用户取消
+      } else {
+        target = normalWins[0];
+      }
+      const collectible = (target.tabs || []).filter(isCollectibleTab);
+      const skipped = (target.tabs || []).length - collectible.length;
+      const skipNote = skipped > 0 ? `\n（另跳过 ${skipped} 个固定标签或浏览器内部页）` : '';
+      if (!confirm(`将收藏 ${collectible.length} 个标签页并关闭${skipNote}\n窗口：${target.tabs.length} 个标签页。继续？`)) {
+        return;
+      }
+      await collectTabsFromWindow(target, true);
+    } catch (e) {
+      toast(e.message || String(e), 'error');
+    }
+  }
+
+  let windowPickerResolve = null;
+  let windowPickerWins = [];
+
+  function pickWindow(wins, preferId) {
+    return new Promise((resolve) => {
+      const list = $('window-picker-list');
+      list.textContent = '';
+      windowPickerWins = wins;
+      wins.forEach((w, i) => {
+        const label = document.createElement('label');
+        label.className = 'checkbox-label';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'pick-window';
+        radio.value = String(w.id);
+        // 默认选中最近活跃的窗口，其次第一个。
+        if ((typeof preferId === 'number' && w.id === preferId) ||
+          (typeof preferId !== 'number' && i === 0)) {
+          radio.checked = true;
+        }
+        const title = (w.tabs.find((t) => t.active) || w.tabs[0] || {}).title || `窗口 ${w.id}`;
+        const text = document.createElement('span');
+        text.textContent = `${title}（${w.tabs.length} 个标签页）`;
+        label.appendChild(radio);
+        label.appendChild(text);
+        list.appendChild(label);
+      });
+      windowPickerResolve = (win) => {
+        windowPickerResolve = null;
+        $('window-picker').classList.add('hidden');
+        resolve(win);
+      };
+      $('window-picker').classList.remove('hidden');
+    });
   }
 
   // 侧边栏按钮点击不会自动获得 activeTab 权限；摘录需要注入脚本读取选区，
@@ -2691,6 +2768,21 @@
     $('btn-settings-import-overwrite').addEventListener('click', () => applySettingsImport('overwrite'));
     $('btn-settings-import-cancel').addEventListener('click', closeSettingsImportDrawer);
 
+    // 独立窗口：单一「收藏并关闭标签页」入口与窗口选择器。
+    $('btn-standalone-collect').addEventListener('click', standaloneCollectAndClose);
+    $('btn-window-picker-ok').addEventListener('click', () => {
+      if (!windowPickerResolve) return;
+      const checked = document.querySelector('input[name="pick-window"]:checked');
+      if (!checked) return;
+      const id = Number(checked.value);
+      // 从最近一次渲染的窗口集合中找回目标（保留 tabs 数据）。
+      const win = windowPickerWins.find((w) => w.id === id) || null;
+      windowPickerResolve(win);
+    });
+    $('btn-window-picker-cancel').addEventListener('click', () => {
+      if (windowPickerResolve) windowPickerResolve(null);
+    });
+
     // 收藏行为
     $('btn-behavior-save').addEventListener('click', saveBehaviorSettings);
     $('behavior-batch-daily').addEventListener('change', updateAiInboxOptionVisibility);
@@ -2833,7 +2925,9 @@
         else if (name === 'dedupe') closeDedupeDrawer();
         else if (name === 'consent') closeConsent();
         else if (name === 'settings-import') closeSettingsImportDrawer();
-        else closeDrawer(name);
+        else if (name === 'window-picker') {
+          if (windowPickerResolve) windowPickerResolve(null);
+        } else closeDrawer(name);
       });
     });
     document.addEventListener('click', (e) => {
@@ -2932,9 +3026,18 @@
     const openWindowBtn = $('btn-window');
     if (openWindowBtn) openWindowBtn.classList.toggle('hidden', uiScene === 'standalone');
     // 独立窗口是扩展页面，没有网页选区可读：隐藏「摘录」按钮（快捷键命令不受影响，
-    // 仍作用于最近活跃的普通网页标签）。
+    // 仍作用于最近活跃的普通网页标签）。顶部只保留「收藏并关闭标签页」主按钮，
+    // 添加当前页面/下拉菜单仅属于侧边栏场景。
     const excerptBtn = $('btn-save-sel');
     if (excerptBtn) excerptBtn.classList.toggle('hidden', uiScene === 'standalone');
+    const addPageBtn = $('btn-add-page');
+    if (addPageBtn) addPageBtn.classList.toggle('hidden', uiScene === 'standalone');
+    const addMenuBtn = $('btn-add-menu');
+    if (addMenuBtn) addMenuBtn.classList.toggle('hidden', uiScene === 'standalone');
+    const addSplit = document.querySelector('.add-split');
+    if (addSplit) addSplit.classList.toggle('hidden', uiScene === 'standalone');
+    const standaloneCollectBtn = $('btn-standalone-collect');
+    if (standaloneCollectBtn) standaloneCollectBtn.classList.toggle('hidden', uiScene !== 'standalone');
     Storage.loadFoldState()
       .then((state2) => {
         const stored = state2 && typeof state2[uiScene] === 'boolean' ? state2[uiScene] : null;

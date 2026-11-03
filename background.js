@@ -95,6 +95,41 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   clearRecentWebTab(tabId).catch(() => {});
 });
 
+// ---- 最近活跃的普通浏览器窗口（独立窗口批量收藏用）----
+// 独立管理窗口是 popup 类型：记录最近聚焦的 normal 窗口，供「收藏并关闭标签页」定位目标。
+const RECENT_WINDOW_KEY = 'recentNormalWindow';
+
+async function readRecentNormalWindow() {
+  try {
+    if (chrome.storage.session) {
+      const items = await chrome.storage.session.get(RECENT_WINDOW_KEY);
+      const rec = items && items[RECENT_WINDOW_KEY];
+      if (rec && typeof rec.id === 'number') {
+        const win = await chrome.windows.get(rec.id).catch(() => null);
+        if (win && win.type === 'normal') return rec.id;
+      }
+      return null;
+    }
+  } catch (e) {}
+  return typeof globalThis.__recentNormalWindow === 'object'
+    ? globalThis.__recentNormalWindow.id : null;
+}
+
+if (chrome.windows && chrome.windows.onFocusChanged) {
+  chrome.windows.onFocusChanged.addListener(async (windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+    try {
+      const win = await chrome.windows.get(windowId);
+      if (win.type !== 'normal') return;
+      if (chrome.storage.session) {
+        await chrome.storage.session.set({ [RECENT_WINDOW_KEY]: { id: win.id } });
+      } else {
+        globalThis.__recentNormalWindow = { id: win.id };
+      }
+    } catch (e) {}
+  });
+}
+
 // 活动标签是普通网页时直接用；否则回退到最近活跃网页标签（不再可用时给出可读错误）。
 async function getActiveWebTab() {
   let tab = null;
@@ -391,6 +426,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'get-recent-web-window':
       readRecentWebTab()
         .then((recent) => sendResponse({ ok: true, windowId: recent ? recent.windowId : null }))
+        .catch(() => sendResponse({ ok: true, windowId: null }));
+      return true;
+    case 'get-recent-normal-window':
+      readRecentNormalWindow()
+        .then((id) => sendResponse({ ok: true, windowId: typeof id === 'number' ? id : null }))
         .catch(() => sendResponse({ ok: true, windowId: null }));
       return true;
     case 'webdav-sync':
