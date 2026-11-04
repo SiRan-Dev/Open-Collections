@@ -7,6 +7,7 @@
   const BACKUP_PREFIX = 'openpocket:backup:';
   const SETTINGS_BACKUP_PREFIX = 'openpocket:settings-backup:';
   const CORRUPT_RAW_PREFIX = 'openpocket:corrupt:';
+  const SYNC_WATERMARK_KEY = 'openpocket:sync-watermark';
   const SETTINGS_KEY = 'openpocket:settings';
 
   const DEFAULT_DATA = {
@@ -396,6 +397,7 @@
   Storage.STORAGE_KEY = STORAGE_KEY;
   Storage.BACKUP_PREFIX = BACKUP_PREFIX;
   Storage.SETTINGS_BACKUP_PREFIX = SETTINGS_BACKUP_PREFIX;
+  Storage.SYNC_WATERMARK_KEY = SYNC_WATERMARK_KEY;
   Storage.SETTINGS_KEY = SETTINGS_KEY;
   Storage.QUOTA_BYTES = QUOTA_BYTES;
   Storage.QUOTA_SAFETY_BYTES = QUOTA_SAFETY_BYTES;
@@ -1297,6 +1299,53 @@
         }
         chrome.storage.local.remove(toRemove, () => resolve());
       });
+    });
+  };
+
+  // 同步水位：成功同步后记录；墓碑 GC 只清理早于水位 90 天的旧墓碑，避免刚删除的项
+  // 在另一台离线设备上复活（OCP-CONF-043）。
+  Storage.setSyncWatermark = async function (ts) {
+    const value = Number(ts);
+    if (!Number.isFinite(value) || value <= 0) return;
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [SYNC_WATERMARK_KEY]: { at: value } }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(value);
+      });
+    });
+  };
+
+  Storage.getSyncWatermark = async function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(SYNC_WATERMARK_KEY, (items) => {
+        const raw = items && items[SYNC_WATERMARK_KEY];
+        resolve(raw && Number.isFinite(Number(raw.at)) ? Number(raw.at) : 0);
+      });
+    });
+  };
+
+  Storage.pruneTombstones = async function (watermark) {
+    const at = Number(watermark);
+    if (!Number.isFinite(at) || at <= 0) return { removedGroups: 0, removedCards: 0 };
+    const cutoff = at - 90 * 24 * 60 * 60 * 1000;
+    return Storage.mutate((data) => {
+      let removedGroups = 0;
+      let removedCards = 0;
+      data.groups = data.groups.filter((g) => {
+        if (g.deleted && Number.isFinite(Number(g.deletedAt)) && Number(g.deletedAt) < cutoff) {
+          removedGroups++;
+          return false;
+        }
+        g.cards = g.cards.filter((c) => {
+          if (c.deleted && Number.isFinite(Number(c.deletedAt)) && Number(c.deletedAt) < cutoff) {
+            removedCards++;
+            return false;
+          }
+          return true;
+        });
+        return true;
+      });
+      return { removedGroups, removedCards };
     });
   };
 
@@ -2202,16 +2251,40 @@
     };
   };
 
-  // 差异预览：导入文件 vs 本地当前值。返回 [{ key, oldValue, newValue }]（仅不同的键）。
-  Storage.diffSettingsExport = function (incomingSettings) {
+  // 计算某个导入键在真正落盘后的规范化值；mode='overwrite' 时未出现的键取默认值。
+  function normalizedImportValue(local, incomingSettings, keyPath, mode) {
+    const raw = readKeyPath(incomingSettings, keyPath);
+    if (raw === undefined && mode !== 'overwrite') return null;
+    const next = Utils.clone(local);
+    if (raw === undefined) {
+      writeKeyPath(next, keyPath, Utils.clone(readKeyPath(DEFAULT_SETTINGS, keyPath)));
+    } else {
+      writeKeyPath(next, keyPath, Utils.clone(raw));
+    }
+    const normalized = normalizeSettings(next);
+    return {
+      oldValue: readKeyPath(local, keyPath),
+      newValue: readKeyPath(normalized, keyPath),
+      reset: raw === undefined
+    };
+  }
+
+  // 差异预览：按实际落盘后的规范化值比较；mode='overwrite' 还列出未出现键的默认重置。
+  // 返回 [{ key, oldValue, newValue, reset }]（仅不同的键）。
+  Storage.diffSettingsExport = function (incomingSettings, mode) {
+    mode = mode === 'overwrite' ? 'overwrite' : 'merge';
     return Storage.loadSettings().then((local) => {
       const diffs = [];
       for (const keyPath of EXPORTABLE_SETTINGS_KEYS) {
-        const newValue = readKeyPath(incomingSettings, keyPath);
-        if (newValue === undefined) continue;
-        const oldValue = readKeyPath(local, keyPath);
-        if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
-          diffs.push({ key: keyPath, oldValue, newValue });
+        const effective = normalizedImportValue(local, incomingSettings, keyPath, mode);
+        if (!effective) continue;
+        if (JSON.stringify(effective.oldValue) !== JSON.stringify(effective.newValue)) {
+          diffs.push({
+            key: keyPath,
+            oldValue: effective.oldValue,
+            newValue: effective.newValue,
+            reset: effective.reset
+          });
         }
       }
       return diffs;
