@@ -1,14 +1,32 @@
 # 发布与上架（Microsoft Edge Add-ons）
 
-本文是 Open Collections 1.2.0 的发布说明与商店提交材料。商店文案、隐私政策可直接复制粘贴。
+本文是 Open Collections 1.2.1 的发布说明与商店提交材料。商店文案、隐私政策可直接复制粘贴。
+
+### 1.2.1 更新内容（商店 What's new）
+
+**中文：**
+
+- 修复存储读取失败或数据损坏时可能覆盖原数据的问题。
+- 修复 WebDAV 仅下载畸形数据、上传备份快照互相覆盖、请求超时/取消不生效等同步问题。
+- 修复首次启用 WebDAV/AI 时可能绕过确认说明的问题；凭据现在会自动保存。
+- 改进同链接去重、固定条目、默认集锦拖放、设置导入预览与恢复、AI 整理撤销等交互。
+- 修复多设备同步时的分组时间戳/删除复活、系统分组重复等一致性问题。
+
+**English:**
+
+- Fixed a data-loss path when local storage reads failed or data was corrupted.
+- Fixed WebDAV download validation, backup snapshot overwrites, and request timeout/cancel handling.
+- Fixed first-enable confirmation bypass for WebDAV/AI; credentials are now saved automatically.
+- Improved link deduplication, pinned cards, empty default-collection drops, settings import preview/restore, and AI undo.
+- Fixed group timestamp/deletion resurrection and duplicate protected groups during multi-device sync.
 
 ## 发布物
 
 | 项目 | 位置 | 说明 |
 | --- | --- | --- |
-| 扩展包 | `dist/open-collections-1.2.0.zip` | 上传到 Partner Center 的文件 |
+| 扩展包 | `dist/open-collections-1.2.1.zip` | 上传到 Partner Center 的文件 |
 | 商店截图 | `store-assets/01-main.png`、`02-batch.png`、`03-sync.png` | 1280×800，PNG |
-| 版本号 | `manifest.json` → `version: "1.2.0"` | 「关于」页自动读取，无需另改 |
+| 版本号 | `manifest.json` → `version: "1.2.1"` | 「关于」页自动读取，无需另改 |
 | 图标 | `icons/icon16|32|48|128.png` | 由 `node icons/make-icons.js` 生成 |
 
 ### 本地安装（拖入 zip）
@@ -19,7 +37,7 @@
 
 已完成的机器校验：
 
-- `manifest.json` 可解析，MV3 字段齐全，`version` 为 `1.2.0`
+- `manifest.json` 可解析，MV3 字段齐全，`version` 为 `1.2.1`
 - 图标 128×128 / 48×48 / 32×32 / 16×16 均为有效 PNG
 - 全部 JS 通过 `node --check`；包内无远程代码、无 `eval`
 - 包内不含开发文件（`.tmp/`、`store-assets/`、`RELEASE.md`、`PROGRESS.md`、`icons/make-icons.js`）
@@ -231,7 +249,7 @@ WebDAV 用户名、密码与 AI 接口的 API Key 使用本机自动生成的随
 ## 五、上架步骤
 
 1. 用 Microsoft 账号登录 [Partner Center](https://partner.microsoft.com/dashboard/microsoftedge/overview)，加入 **Microsoft Edge 扩展计划**（免费）。
-2. **新建扩展** → 填写扩展名称 → 上传 `dist/open-collections-1.2.0.zip`。
+2. **新建扩展** → 填写扩展名称 → 上传 `dist/open-collections-1.2.1.zip`。
 3. **属性**：选择分类「效率」，勾选支持的平台与语言。
 4. **隐私**：当被问到是否访问、收集或传输个人信息时选择 **是**（本扩展会处理标签页标题、网址与你保存的摘录等），并填入隐私政策 URL。
 5. **商店列表**（中文）：粘贴上面的名称、简短描述、详细描述，上传 3 张 1280×800 截图，填写搜索词与隐私政策 URL。

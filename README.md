@@ -32,7 +32,7 @@
 
 适用于离线环境、开发者或 Chrome 用户。
 
-1. 从 [Releases](https://github.com/SiRan-Dev/Open-Collections/releases/latest) 下载发布包 zip（如 `open-collections-1.2.0.zip`）
+1. 从 [Releases](https://github.com/SiRan-Dev/Open-Collections/releases/latest) 下载发布包 zip（如 `open-collections-1.2.1.zip`）
 2. 打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启「开发者模式」
 3. 把 zip 文件直接拖入页面即可安装
 4. 点击工具栏的 Open Collections 图标即可开始使用

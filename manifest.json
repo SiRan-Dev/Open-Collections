@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Open Collections",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "minimum_chrome_version": "114",
   "description": "把网页与摘录收进分组：侧边栏、搜索、批量打开、备份导入导出，可选 WebDAV 云同步与 AI 整理。",
   "icons": {
