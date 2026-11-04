@@ -8,3 +8,6 @@ node_modules/
 
 # 发布打包产物
 dist/
+
+#报告文件
+reports/

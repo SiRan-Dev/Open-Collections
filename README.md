@@ -2,6 +2,10 @@
 
 本地优先的网页收藏与整理扩展（Chromium MV3，Edge / Chrome 114+）。替代 Edge 已移除的「集锦」，并融合 OneTab 式批量收藏：收藏当前页、批量收进标签页、保存网页选区为摘录，再用可选的 AI 按固定粗分类自动归组。数据默认只存在本机，可选 WebDAV 同步到**你自己的**服务器。无账号、无遥测、无远程代码、GPLv3 开源。
 
+[![从 Edge 加载项安装](https://img.shields.io/badge/Edge%20Add--ons-从%20Edge%20加载项安装-0b6cff?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold)
+
+[**从 Edge 加载项安装 →**](https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold)
+
 ![独立管理窗口（演示数据）](docs/assets/screenshots/standalone.png)
 ![AI 整理预览（演示数据，mock 响应）](docs/assets/screenshots/ai-preview.png)
 
@@ -22,11 +26,13 @@
 
 ## 安装
 
-### Edge 商店 / Chrome 应用商店
+### Edge 加载项商店（推荐）
 
-待上架。商店版本与仓库一致。
+打开 [Edge 加载项商店 · Open Collections](https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold)，点击「获取」即可安装。商店版本与仓库一致。
 
-### 本地安装（拖入 zip）
+### 离线 / 本地安装（备用）
+
+适用于离线环境、开发者或 Chrome 用户。
 
 1. 从 [Releases](https://github.com/SiRan-Dev/Open-Collections/releases/latest) 下载发布包 zip（如 `open-collections-1.2.0.zip`）
 2. 打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启「开发者模式」

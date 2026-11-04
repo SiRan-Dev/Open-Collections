@@ -2,6 +2,7 @@
 
 > 用途：把商店后台需要填写/勾选的内容集中在一处，避免逐项查找。发布前请核对实际页面地址与文案。
 > 隐私政策公开地址（商店后台填写）：https://siran-dev.github.io/Open-Collections/privacy.html
+> Edge 加载项商店（已上架）：https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold
 
 ## 1. 单一用途描述（Single purpose）
 

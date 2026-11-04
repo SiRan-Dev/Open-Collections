@@ -51,16 +51,16 @@
     border-bottom: 1px solid var(--line);
   }
   header.site .wrap {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px;
     padding-top: 10px; padding-bottom: 10px;
   }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--fg); white-space: nowrap; }
   .brand:hover { text-decoration: none; }
   .brand-icon { width: 28px; height: 28px; border-radius: 7px; display: block; flex: none; }
-  nav.site { display: flex; gap: 18px; font-size: 14px; }
+  nav.site { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 18px; font-size: 14px; }
   nav.site a { color: var(--muted); }
   nav.site a:hover { color: var(--accent); text-decoration: none; }
-  @media (max-width: 640px) { nav.site { gap: 12px; font-size: 13px; } }
+  @media (max-width: 640px) { nav.site { gap: 10px 12px; font-size: 13px; } }
 
   /* 首屏 */
   .hero { padding: 64px 0 40px; text-align: center; }
@@ -162,6 +162,7 @@
       <a href="#install">安装</a>
       <a href="#faq">FAQ</a>
       <a href="privacy.html">隐私政策</a>
+      <a href="https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold">Edge 加载项商店</a>
       <a href="https://github.com/SiRan-Dev/Open-Collections">GitHub</a>
     </nav>
   </div>
@@ -173,8 +174,8 @@
       <h1>把散落的网页，收进自己的集锦</h1>
       <p class="tagline">本地优先的网页收藏与整理扩展：收藏页面与摘录、批量收进标签页、可选 AI 粗分类、可选 WebDAV 同步到你自己的服务器。Edge 集锦停了之后，数据依然完全属于你。</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/SiRan-Dev/Open-Collections">从 GitHub 获取</a>
-        <a class="btn" href="#install">查看安装步骤</a>
+        <a class="btn btn-primary" href="https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold">从 Edge 加载项安装</a>
+        <a class="btn" href="https://github.com/SiRan-Dev/Open-Collections">从 GitHub 获取</a>
       </div>
       <p class="hero meta">无账号 · 无遥测 · 无远程代码 · GPLv3 开源 · Edge / Chrome（MV3）</p>
       <figure class="hero-shot">
@@ -252,12 +253,14 @@
     <div class="wrap">
       <h2>安装：三步</h2>
       <ol>
-        <li>从 <a href="https://github.com/SiRan-Dev/Open-Collections/releases/latest">Releases</a> 下载发布包 zip</li>
-        <li>打开 <code>chrome://extensions</code>（Edge 为 <code>edge://extensions</code>），开启「开发者模式」，把 zip 文件直接拖入页面即可安装</li>
-        <li>点击工具栏的 Open Collections 图标开始使用</li>
+        <li>打开 <a href="https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold">Edge 加载项商店 · Open Collections</a>，点击「获取」安装</li>
+        <li>在浏览器工具栏的扩展菜单中把 Open Collections 固定到工具栏</li>
+        <li>点击工具栏图标打开侧边栏，开始收藏</li>
       </ol>
-      <p class="lead" style="margin-top:14px">若浏览器不接受拖入，解压 zip 后点「加载已解压的扩展程序」，选择解压出来的文件夹。</p>
-      <p class="lead" style="margin-top:14px">Edge 商店 / Chrome 应用商店上架筹备中，商店版本与仓库一致。</p>
+      <details style="margin-top:16px">
+        <summary>离线 / 开发者安装（拖入 zip 或加载已解压目录）</summary>
+        <p>适用于离线环境、开发者或 Chrome 用户：从 <a href="https://github.com/SiRan-Dev/Open-Collections/releases/latest">Releases</a> 下载 zip，打开 <code>chrome://extensions</code>（Edge 为 <code>edge://extensions</code>），开启「开发者模式」后把 zip 直接拖入页面。若浏览器不接受拖入，解压 zip 后点「加载已解压的扩展程序」，选择解压出来的文件夹。</p>
+      </details>
     </div>
   </section>
 
@@ -307,6 +310,7 @@
 <footer class="site">
   <div class="wrap">
     <div class="links">
+      <a href="https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold">Edge 加载项商店</a>
       <a href="https://github.com/SiRan-Dev/Open-Collections">GitHub 仓库</a>
       <a href="privacy.html">隐私政策</a>
       <a href="https://github.com/SiRan-Dev/Open-Collections/blob/main/LICENSE">GPL-3.0 许可证</a>
