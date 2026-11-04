@@ -243,8 +243,9 @@
     li.className = 'group-item' + (g.id === state.data.activeGroupId ? ' active' : '');
     li.dataset.id = g.id;
     const aliveCards = g.cards.filter((c) => !c.deleted).length;
+    const safeColor = /^#[0-9a-fA-F]{6}$/.test(String(g.color || '')) ? g.color : Utils.PALETTE[0];
     li.innerHTML = `
-      <span class="group-dot" style="background:${Utils.escapeHtml(g.color)}"></span>
+      <span class="group-dot" style="background:${Utils.escapeHtml(safeColor)}"></span>
       <span class="group-name">${Utils.escapeHtml(g.name)}</span>
       <span class="group-count">${aliveCards}</span>
     `;
@@ -425,6 +426,11 @@
     if (isEmpty) updateEmptyState(q);
 
     let dividerInserted = false;
+    // 默认集锦始终显示固定投放区，即使当前没有固定卡片（OCP-CONF-035）。
+    if (!q && g.system && items.length) {
+      els.cardList.appendChild(makePinnedDivider());
+      dividerInserted = true;
+    }
     for (const it of items) {
       const isPinned = !q && it.group.system && !!it.card.pinned;
       // 固定区开头插入一次分隔标题。
@@ -738,13 +744,16 @@
       return;
     }
     const full = inputs.map((i) => Object.assign(i, { pinned: !!pinned }));
+    let addedCount = 0;
     try {
-      await Storage.addCards(g.id, full);
+      const res = await Storage.addCardsChecked(g.id, full, { allowDuplicateLinks: allowDup });
+      addedCount = res.cards.length;
+      skippedDup += res.skipped.length;
     } catch (e) {
       toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
       return;
     }
-    toast(`已收进「${g.name}」${urls.length - skippedDup} 个链接${pinned ? '（已固定）' : ''}${skippedDup ? `，跳过 ${skippedDup} 个重复` : ''}`, 'success');
+    toast(`已收进「${g.name}」${addedCount} 个链接${pinned ? '（已固定）' : ''}${skippedDup ? `，跳过 ${skippedDup} 个重复` : ''}`, 'success');
     await loadAndRender();
   }
 
@@ -941,9 +950,9 @@
   }
 
   function openCardLink(c) {
-    const url = c.type === 'excerpt' ? (c.sourceUrl || c.url) : c.url;
+    const url = c.type === 'excerpt' ? (c.sourceUrl || c.url) : (c.url || c.sourceUrl);
     if (url && Utils.isHttpUrl(url)) {
-      chrome.tabs.create({ url });
+      chrome.tabs.create({ url }).catch(() => toast('无法打开链接：' + url, 'error'));
     } else {
       toast('这条内容没有可打开的网页链接', 'error');
     }
@@ -958,11 +967,12 @@
     const to = ids.indexOf(targetId);
     if (from < 0 || to < 0) return;
     ids.splice(from, 1);
-    ids.splice(to, 0, draggedId);
+    // 向下拖动时删除源后目标下标前移一位，插入位置要相应减 1。
+    ids.splice(from < to ? to - 1 : to, 0, draggedId);
     await Storage.reorderCards(groupId, ids);
-    const orderMap = new Map(ids.map((id, i) => [id, i]));
-    alive.sort((a, b) => (orderMap.get(a.id) === undefined ? 0 : orderMap.get(a.id)) -
-      (orderMap.get(b.id) === undefined ? 0 : orderMap.get(b.id)));
+    const byId = new Map(alive.map((c) => [c.id, c]));
+    g.cards = ids.map((id) => byId.get(id)).filter(Boolean)
+      .concat(g.cards.filter((c) => c.deleted));
     renderCards();
   }
 
@@ -1040,7 +1050,7 @@
     if (!name) return;
     try {
       const g = await Storage.createGroup(name);
-      state.data.activeGroupId = g.id;
+      if (state.data) state.data.activeGroupId = g.id;
       await loadAndRender();
       toast('分组已创建', 'success');
     } catch (e) {
@@ -1245,15 +1255,20 @@
     let targetGroup = null;
     let created = false;
     let revived = false;
+    let addedCount = 0;
     if (cardInputs.length) {
       if (oneTabMode) {
-        const res = await Storage.addCardsToDailyGroup(Utils.dateKey(Utils.now()), cardInputs);
+        const res = await Storage.addCardsToDailyGroup(Utils.dateKey(Utils.now()), cardInputs, { allowDuplicateLinks: allowDuplicates });
         targetGroup = res.group;
         created = res.created;
         revived = res.revived;
+        addedCount = res.cards.length;
+        skippedDuplicates += res.skipped.length;
       } else {
-        await Storage.addCards(activeGroup.id, cardInputs);
+        const res = await Storage.addCardsChecked(activeGroup.id, cardInputs, { allowDuplicateLinks: allowDuplicates });
         targetGroup = activeGroup;
+        addedCount = res.cards.length;
+        skippedDuplicates += res.skipped.length;
       }
     }
 
@@ -1276,22 +1291,22 @@
     const skipNote = skippedDuplicates ? `，跳过 ${skippedDuplicates} 条重复链接` : '';
     const unsupportedNote = unsupportedCount ? `，跳过 ${unsupportedCount} 个不受支持的页面` : '';
     const recoverNote = closed > 0 ? '；标签页已关闭，可用 Ctrl+Shift+T 恢复' : '';
-    if (closeAfter && !items.length) {
+    if (closeAfter && addedCount === 0) {
       const closeNote = closed > 0 ? `，并关闭 ${closed} 个标签页` : '';
       toast(`已跳过 ${skippedDuplicates} 条重复链接${unsupportedNote}${closeNote}${recoverNote}`, 'info');
     } else if (closeAfter) {
       toast(`已收进「${targetGroup.name}」并关闭 ${closed} 个标签页${skipNote}${unsupportedNote}${recoverNote}`, 'success');
-    } else if (!items.length) {
+    } else if (addedCount === 0) {
       toast(`已跳过 ${skippedDuplicates} 条重复链接${unsupportedNote}，未添加任何标签页`, 'info');
       return;
     } else if (oneTabMode && created) {
-      toast(`已新建「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}${unsupportedNote}`, 'success');
+      toast(`已新建「${targetGroup.name}」并收进 ${addedCount} 个标签页${skipNote}${unsupportedNote}`, 'success');
     } else if (oneTabMode && revived) {
-      toast(`已重新启用「${targetGroup.name}」并收进 ${items.length} 个标签页${skipNote}${unsupportedNote}`, 'success');
+      toast(`已重新启用「${targetGroup.name}」并收进 ${addedCount} 个标签页${skipNote}${unsupportedNote}`, 'success');
     } else if (oneTabMode) {
-      toast(`已追加 ${items.length} 个标签页到「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
+      toast(`已追加 ${addedCount} 个标签页到「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
     } else {
-      toast(`已将 ${items.length} 个标签页收进「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
+      toast(`已将 ${addedCount} 个标签页收进「${targetGroup.name}」${skipNote}${unsupportedNote}`, 'success');
     }
     await loadAndRender();
   }
@@ -1442,6 +1457,16 @@
       return;
     }
     try {
+      if (state._importOverwrite) {
+        let incoming = null;
+        try { incoming = JSON.parse(text); } catch (e) { /** 交给 Storage.importJSON 统一报错 */ }
+        const incomingGroups = incoming && Array.isArray(incoming.groups) ? incoming.groups : [];
+        const incomingCards = incomingGroups.reduce((n, g) => n + (g && Array.isArray(g.cards) ? g.cards.length : 0), 0);
+        const currentGroups = state.data ? state.data.groups.filter((g) => !g.deleted).length : 0;
+        if (!confirm(`覆盖导入会用文件中的 ${incomingGroups.length} 个分组 / ${incomingCards} 条卡片替换当前 ${currentGroups} 个分组及其全部内容。确定继续？`)) {
+          return;
+        }
+      }
       const res = await Storage.importJSON(text, { merge: !state._importOverwrite });
       toast(state._importOverwrite ? '已覆盖导入' : `已合并导入（新增 ${res.cards || 0} 条）`, 'success');
       await loadAndRender();
@@ -1548,9 +1573,12 @@
     }
     try {
       const res = await Storage.applySettingsExport(pendingSettingsImport.settings, mode);
+      state.settingsBackupKey = res.backupKey;
+      const restoreBtn = $('btn-restore-settings-backup');
+      if (restoreBtn) restoreBtn.classList.toggle('hidden', !state.settingsBackupKey);
       closeSettingsImportDrawer();
       await loadSettingsToForm();
-      toast(`已${mode === 'overwrite' ? '覆盖' : '合并'}导入设置：变更 ${res.applied.length} 项；导入前已自动备份（可在本地存储中恢复）`, 'success');
+      toast(`已${mode === 'overwrite' ? '覆盖' : '合并'}导入设置：变更 ${res.applied.length} 项；可在「数据管理」中恢复导入前设置`, 'success');
     } catch (e) {
       toast('导入失败：' + (e.message || e), 'error');
     }
@@ -1558,6 +1586,34 @@
 
   // ---- WebDAV 设置与同步 ----
   let wdSettings = null;
+
+  // 其他窗口/远端同步改了设置时，刷新仍打开的设置表单中未被用户聚焦的字段（OCP-CONF-006）。
+  function applySettingsToOpenForm(s) {
+    if (!els.settings || els.settings.classList.contains('hidden')) return;
+    const setValue = (id, value) => {
+      const el = $(id);
+      if (el && document.activeElement !== el) el.value = value;
+    };
+    const setChecked = (id, value) => {
+      const el = $(id);
+      if (el && document.activeElement !== el) el.checked = !!value;
+    };
+    const w = (s && s.webdav) || {};
+    const a = (s && s.ai) || {};
+    const b = (s && s.behavior) || {};
+    setValue('wd-url', w.url || '');
+    setValue('wd-remote-dir', w.remoteDir || '/open-collections');
+    setValue('wd-interval', Number(w.intervalMinutes) || 30);
+    setChecked('wd-autosync', w.autoSync);
+    setChecked('wd-sync-aicache', w.syncScope && w.syncScope.aiCache);
+    setChecked('wd-sync-backups', w.syncScope && w.syncScope.backups);
+    setChecked('behavior-batch-daily', b.batchCollectDaily);
+    setChecked('behavior-ai-inbox', b.aiIncludeInbox);
+    setChecked('behavior-allow-dup', b.allowDuplicateLinks);
+    setValue('ai-base-url', a.baseUrl || '');
+    setValue('ai-model', a.model || '');
+    if (a.categories && a.categories.length) setValue('ai-categories', a.categories.join('\n'));
+  }
 
   async function loadSettingsToForm() {
     const raw = await Storage.loadSettings();
@@ -1627,7 +1683,16 @@
     const vaultEl = $('ov-vault-value');
     if (vaultEl) {
       const v = Number(raw.secretsV) || 0;
-      vaultEl.textContent = v === 1 ? '待迁移旧密文' : '正常（免密加密）';
+      if (v === 1) {
+        vaultEl.textContent = '待迁移旧密文';
+      } else {
+        try {
+          const info = await Vault.getInfo();
+          vaultEl.textContent = info && info.exists ? '正常（免密加密）' : '未创建本地密钥';
+        } catch (e) {
+          vaultEl.textContent = '状态未知';
+        }
+      }
     }
   }
 
@@ -1642,8 +1707,9 @@
 
   function captureSecretPresence(settings) {
     state.aiHasKey = hasSecretValue(settings, 'aiApiKey');
-    state.webdavHasCredentials = hasSecretValue(settings, 'webdavUsername') ||
-      hasSecretValue(settings, 'webdavPassword');
+    state.webdavHasUsername = hasSecretValue(settings, 'webdavUsername');
+    state.webdavHasPassword = hasSecretValue(settings, 'webdavPassword');
+    state.webdavHasCredentials = state.webdavHasUsername || state.webdavHasPassword;
     state.secretsV = Number(settings && settings.secretsV) || 0;
   }
 
@@ -1662,8 +1728,8 @@
     const userInput = $('wd-username');
     const passInput = $('wd-password');
     if (keyInput) keyInput.placeholder = state.aiHasKey ? savedNote : '';
-    if (userInput) userInput.placeholder = state.webdavHasCredentials ? savedNote : '';
-    if (passInput) passInput.placeholder = state.webdavHasCredentials ? savedNote : '';
+    if (userInput) userInput.placeholder = state.webdavHasUsername ? savedNote : '';
+    if (passInput) passInput.placeholder = state.webdavHasPassword ? savedNote : '';
   }
 
   function updateSecurityUI() {
@@ -1677,7 +1743,7 @@
       status.className = 'hint' + (pending ? ' warning' : '');
       if (pending) {
         status.textContent = state.legacySkipped
-          ? '旧版主密码加密的凭据尚未迁移：旧密文保留不变；重新打开设置可再次迁移，重新保存凭据会自动改用免密加密。'
+          ? '旧版主密码加密的凭据尚未迁移：旧密文保留不变；重新打开设置可再次迁移。请先完成一次性迁移，再修改凭据。'
           : '检测到旧版主密码加密的凭据：输入旧主密码可一次性迁移为免密加密；跳过不会清空任何数据。';
       } else {
         status.textContent = '敏感凭据使用本机自动生成的保险库密钥加密保存，启动时自动解封，全程无需输入密码。';
@@ -1883,6 +1949,12 @@
     try {
       const res = await Storage.migrateLegacySecrets(input ? input.value : '');
       if (input) input.value = '';
+      if (!res || res.migrated !== true) {
+        toast('当前没有可迁移的旧版密文', 'info');
+        state.legacySkipped = false;
+        updateSecurityUI();
+        return;
+      }
       const raw = await Storage.loadSettings();
       captureSecretPresence(raw);
       wdSettings = redactSettings(raw);
@@ -2008,7 +2080,7 @@
 
   async function saveSettings(force) {
     const wantEnabled = $('wd-enabled').checked;
-    if (wantEnabled && !state.webdavEnabled && !force) {
+    if (wantEnabled && !state.webdavEnabled && force !== true) {
       openConsent('webdav');
       return;
     }
@@ -2101,7 +2173,7 @@
       const name = document.createElement('span');
       name.className = 'dedupe-group-name';
       name.textContent = keeper.card.title || keeper.card.url || '（无标题）';
-      name.title = keeper.key;
+      name.title = keeper.card.url || keeper.card.title || group.key || '';
 
       const count = document.createElement('span');
       count.className = 'dedupe-group-count';
@@ -2156,8 +2228,11 @@
   }
 
   async function scanDuplicates(auto) {
+    const scanId = (state.dedupeScanId || 0) + 1;
+    state.dedupeScanId = scanId;
     try {
       const data = await Storage.load();
+      if (state.dedupeScanId !== scanId) return false;
       const groups = Storage.findDuplicateGroups(data);
       if (!groups.length) {
         if (!auto) toast('未发现重复链接', 'info');
@@ -2167,6 +2242,8 @@
       state.dedupeSelected = new Set(groups.map((g, i) => i));
       state.dedupeExpanded = new Set();
       state.dedupeKeep = 'oldest';
+      const oldestRadio = document.querySelector('input[name="dedupe-keep"][value="oldest"]');
+      if (oldestRadio) oldestRadio.checked = true;
       state.dedupeBackupKey = null;
       state.dedupeRemoved = [];
       renderDedupeDialog();
@@ -2196,6 +2273,7 @@
     }
     const btn = $('btn-dedupe-run');
     btn.disabled = true;
+    state.dedupeBusy = true;
     try {
       const backupKey = await Storage.createBackup('dedupe');
       state.dedupeBackupKey = backupKey;
@@ -2219,6 +2297,7 @@
     } catch (e) {
       toast('清理重复链接失败：' + (e.message || e), 'error');
     } finally {
+      state.dedupeBusy = false;
       btn.disabled = false;
     }
   }
@@ -2237,6 +2316,11 @@
   }
 
   function closeDedupeDrawer() {
+    if (state.dedupeBusy) {
+      toast('正在清理重复链接，请稍候', 'info');
+      return;
+    }
+    state.dedupeScanId = (state.dedupeScanId || 0) + 1;
     els.dedupeDrawer.classList.add('hidden');
   }
 
@@ -2348,6 +2432,7 @@
     }
     // 只把密钥放入本次请求的临时配置，不写入 state。
     const requestCfg = { baseUrl: cfg.baseUrl, model: cfg.model, apiKey };
+    const cfgSnapshot = JSON.stringify(cfg);
     const granted = await requestOriginPermission(requestCfg.baseUrl);
     if (!granted) {
       setAiStatus('未获得访问该接口的网络权限，请重试并在弹窗中选择允许', 'error');
@@ -2362,6 +2447,10 @@
       return;
     }
     try {
+      if (JSON.stringify(readAiForm()) !== cfgSnapshot) {
+        setAiStatus('连接成功，但测试期间设置已被修改，未保存测试时的旧配置', 'info');
+        return;
+      }
       const patch = { ai: { baseUrl: cfg.baseUrl, model: cfg.model, categories: cfg.categories } };
       if (cfg.apiKey) patch.ai.apiKey = cfg.apiKey;
       await persistSettings(patch, { reschedule: false });
@@ -2434,6 +2523,10 @@
   }
 
   function closeAiDrawer() {
+    if (state.aiApplying) {
+      toast('正在应用整理方案，请稍候', 'info');
+      return;
+    }
     state.aiRunId++;
     if (state.aiAbort) {
       state.aiAbort.abort();
@@ -2445,6 +2538,7 @@
     state.aiInboxSkipped = 0;
     state.aiPinnedSkipped = 0;
     state.aiBackupKey = null;
+    state.aiUndo = null;
     updateAiInboxSkipHint();
     $('btn-ai-organize').disabled = false;
   }
@@ -2688,9 +2782,9 @@
 
       const aliveCount = state.data.groups.filter((g) => !g.deleted).length;
       plan.groups.forEach((g, index) => {
+        // 允许复用同名源分组：storage 的 staysInSource 已保证原分组卡片不会被自移动（OCP-CONF-023）。
         const existing = state.data.groups.find((x) =>
-          !x.deleted && !state.aiGroupIds.includes(x.id) &&
-          Utils.normalizeName(x.name) === Utils.normalizeName(g.name));
+          !x.deleted && Utils.normalizeName(x.name) === Utils.normalizeName(g.name));
         if (existing) {
           g.color = existing.color;
           g.reuseGroupName = existing.name;
@@ -2742,10 +2836,15 @@
     const sourceGroupIds = state.aiGroupIds.slice();
     $('btn-ai-apply').disabled = true;
     $('btn-ai-cancel').disabled = true;
+    state.aiApplying = true;
     try {
       const backupKey = await Storage.createBackup('ai-organize');
       const res = await Storage.applyOrganizePlan({ sourceGroupIds, groups });
       state.aiBackupKey = backupKey;
+      state.aiUndo = {
+        moves: res.moves || [],
+        createdGroupIds: (res.createdGroups || []).map((g) => g.id)
+      };
       await loadAndRender();
       if (res.movedCards || res.skippedDuplicates) {
         let text = `已新建 ${res.createdGroups.length} 个、并入 ${res.reusedGroups.length} 个已有分组，移动 ${res.movedCards} 条内容。`;
@@ -2761,15 +2860,23 @@
       if (e.code === 'URL_NOT_COLLECTABLE') toast(e.message || Utils.URL_NOT_COLLECTABLE_MESSAGE, 'error');
       else toast('应用失败：' + (e.message || e), 'error');
     } finally {
+      state.aiApplying = false;
       $('btn-ai-apply').disabled = false;
       $('btn-ai-cancel').disabled = false;
     }
   }
 
   async function undoAiPlan() {
-    if (!state.aiBackupKey) return;
-    if (!confirm('撤销本次 AI 整理？将恢复到整理前的数据。')) return;
+    if (!state.aiUndo && !state.aiBackupKey) return;
+    if (!confirm('撤销本次 AI 整理？将只回滚本次整理移动的卡片；应用后在其他窗口新增/编辑的内容会保留。')) return;
     try {
+      if (state.aiUndo && state.aiUndo.moves && state.aiUndo.moves.length) {
+        const res = await Storage.undoOrganizePlan(state.aiUndo);
+        await loadAndRender();
+        closeAiDrawer();
+        toast(`已撤销本次整理，恢复 ${res.restored} 条内容`, 'success');
+        return;
+      }
       await Storage.restoreBackup(state.aiBackupKey);
       await loadAndRender();
       closeAiDrawer();
@@ -2787,6 +2894,7 @@
     }
     const label = { sync: '同步', upload: '上传', download: '下载' }[mode] || mode;
     const s = readSettingsFromForm();
+    const formSnapshot = JSON.stringify(s);
     if (!s.webdav.url) {
       setWDStatus('请先填写 WebDAV 服务器地址', 'error');
       return;
@@ -2812,6 +2920,11 @@
     }
     setWDStatus(`正在${label}…`, '');
     try {
+      // 等待权限/凭据期间设置可能被其他窗口修改；此时不要用旧表单覆盖新设置。
+      if (JSON.stringify(readSettingsFromForm()) !== formSnapshot) {
+        setWDStatus('设置已被其他窗口修改，请重新点击' + label, 'error');
+        return;
+      }
       // 先落盘当前表单；后台同步时再按需解密凭据。
       await persistSettings(s);
       $('wd-username').value = '';
@@ -2819,7 +2932,9 @@
       const res = await sendMessage({ type: 'webdav-sync', mode });
       const result = res && res.result;
       let detail = '';
-      if (result && result.stats) {
+      if (result && result.uploaded) {
+        detail = '（本机数据已上传）';
+      } else if (result && result.stats) {
         const cs = result.stats.cards;
         const gs = result.stats.groups;
         const parts = [
@@ -2829,7 +2944,11 @@
         if (result.settingsChanged) parts.push(`设置 ${result.settingsChanged} 个键`);
         if (result.aiCacheSkipped) parts.push('AI 缓存空间不足已跳过');
         if (result.uncollectableSkipped) parts.push(`跳过 ${result.uncollectableSkipped} 个不受支持的链接`);
+        if (result.warnings && result.warnings.length) parts.push(`警告 ${result.warnings.length} 项`);
         detail = `（${parts.join('，')}）`;
+        if (result.warnings && result.warnings.length) {
+          toast(result.warnings.slice(0, 2).join('；'), 'info');
+        }
       } else if (result) {
         detail = `（${result.groups} 个分组）`;
       }
@@ -2847,7 +2966,9 @@
   function openDrawer(name) {
     const drawer = name === 'settings' ? els.settings : els.editor;
     drawer.classList.remove('hidden');
-    if (name === 'settings') loadSettingsToForm();
+    if (name === 'settings') {
+      loadSettingsToForm().catch((e) => toast('读取设置失败：' + (e.message || e), 'error'));
+    }
   }
 
   // 设置分区导航跳转：滚动到目标分区并高亮导航项。
@@ -2933,6 +3054,19 @@
     $('btn-settings-import-merge').addEventListener('click', () => applySettingsImport('merge'));
     $('btn-settings-import-overwrite').addEventListener('click', () => applySettingsImport('overwrite'));
     $('btn-settings-import-cancel').addEventListener('click', closeSettingsImportDrawer);
+    $('btn-restore-settings-backup').addEventListener('click', async () => {
+      if (!state.settingsBackupKey) return;
+      if (!confirm('恢复导入前的全部设置？导入后修改的其他设置也会被回滚。')) return;
+      try {
+        await Storage.restoreSettingsBackup(state.settingsBackupKey);
+        state.settingsBackupKey = null;
+        $('btn-restore-settings-backup').classList.add('hidden');
+        await loadSettingsToForm();
+        toast('已恢复导入前设置', 'success');
+      } catch (e) {
+        toast('恢复失败：' + (e.message || e), 'error');
+      }
+    });
 
     // 独立窗口：单一「收藏并关闭标签页」入口与窗口选择器。
     $('btn-standalone-collect').addEventListener('click', standaloneCollectAndClose);
@@ -2962,10 +3096,11 @@
     ['behavior-batch-daily', 'behavior-ai-inbox', 'behavior-allow-dup'].forEach((id) => {
       $(id).addEventListener('change', saveBehaviorSettings);
     });
-    const autoSaveWebdav = () => saveSettings(true);
-    ['wd-url', 'wd-remote-dir', 'wd-interval', 'wd-autosync', 'wd-sync-aicache', 'wd-sync-backups']
+    const autoSaveWebdav = () => saveSettings();
+    ['wd-url', 'wd-remote-dir', 'wd-interval', 'wd-autosync', 'wd-sync-aicache', 'wd-sync-backups',
+      'wd-username', 'wd-password']
       .forEach((id) => $(id).addEventListener('change', autoSaveWebdav));
-    $('wd-enabled').addEventListener('change', saveSettings);
+    $('wd-enabled').addEventListener('change', () => saveSettings());
     ['ai-base-url', 'ai-model', 'ai-categories'].forEach((id) => {
       $(id).addEventListener('change', () => saveAiSettings(true));
     });
@@ -3131,6 +3266,7 @@
             const oldWdEnabled = !!(old.webdav && old.webdav.enabled);
             captureSecretPresence(s);
             wdSettings = redactSettings(s);
+            applySettingsToOpenForm(s);
             state.secretsV = Number(s.secretsV) || 0;
             const a = s.ai || {};
             state.aiConfig = {

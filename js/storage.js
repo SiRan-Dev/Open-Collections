@@ -5,6 +5,8 @@
 
   const STORAGE_KEY = 'openpocket:v1';
   const BACKUP_PREFIX = 'openpocket:backup:';
+  const SETTINGS_BACKUP_PREFIX = 'openpocket:settings-backup:';
+  const CORRUPT_RAW_PREFIX = 'openpocket:corrupt:';
   const SETTINGS_KEY = 'openpocket:settings';
 
   const DEFAULT_DATA = {
@@ -58,14 +60,57 @@
       global instanceof ServiceWorkerGlobalScope;
   }
 
-  // 从 chrome.storage.local 读取，损坏或为空时返回默认数据并记录错误。
+  // 结构化读取错误：调用方保留原有 catch 路径即可；错误信息面向用户可读。
+  function storageError(code, message, extra) {
+    const err = new Error(message);
+    err.code = code;
+    if (extra && typeof extra === 'object') Object.assign(err, extra);
+    return err;
+  }
+
+  function storageReadFailed(detail) {
+    return storageError(
+      'STORAGE_READ_FAILED',
+      '读取本地存储失败，本次操作已取消以避免覆盖已有数据。请稍后重试；若持续失败，请检查浏览器扩展存储是否可用' +
+        (detail ? '（' + detail + '）' : '')
+    );
+  }
+
+  function dataCorrupt(detail) {
+    return storageError(
+      'DATA_CORRUPT',
+      '本地存储的数据已损坏，本次操作已取消以避免覆盖原有内容。请尝试从备份恢复' +
+        (detail ? '（' + detail + '）' : '')
+    );
+  }
+
+  // 损坏原始值另存为恢复副本（尽力而为；失败不阻断报错路径）。
+  function preserveCorruptRaw(raw) {
+    try {
+      const key = CORRUPT_RAW_PREFIX + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      chrome.storage.local.set({ [key]: raw }, () => {
+        if (chrome.runtime.lastError) {
+          console.warn('[OpenCollections] 无法保存损坏数据的恢复副本:', chrome.runtime.lastError.message);
+        }
+      });
+    } catch (e) {
+      console.warn('[OpenCollections] 无法保存损坏数据的恢复副本:', e);
+    }
+  }
+
+  // 从 chrome.storage.local 读取。区分「键不存在」（首次运行，返回默认数据）与
+  // 「读取失败 / JSON 损坏 / 类型异常」（抛出结构化错误，绝不返回空默认数据给写路径）。
   async function loadRaw() {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       try {
         chrome.storage.local.get(STORAGE_KEY, (items) => {
           if (chrome.runtime.lastError) {
             console.error('[OpenCollections] storage read error:', chrome.runtime.lastError);
-            resolve(Utils.clone(DEFAULT_DATA));
+            reject(storageReadFailed(chrome.runtime.lastError.message));
+            return;
+          }
+          if (items == null || typeof items !== 'object') {
+            reject(storageReadFailed('返回数据无效'));
             return;
           }
           const raw = items[STORAGE_KEY];
@@ -74,24 +119,34 @@
             return;
           }
           if (typeof raw === 'string') {
+            let parsed;
             try {
-              resolve(JSON.parse(raw));
+              parsed = JSON.parse(raw);
             } catch (e) {
-              console.error('[OpenCollections] data JSON parse failed, using default.', e);
-              resolve(Utils.clone(DEFAULT_DATA));
+              console.error('[OpenCollections] data JSON parse failed.', e);
+              preserveCorruptRaw(raw);
+              reject(dataCorrupt('收藏数据 JSON 解析失败'));
+              return;
             }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+              preserveCorruptRaw(raw);
+              reject(dataCorrupt('收藏数据不是有效的对象结构'));
+              return;
+            }
+            resolve(parsed);
             return;
           }
-          if (typeof raw === 'object') {
+          if (typeof raw === 'object' && !Array.isArray(raw)) {
             resolve(raw);
           } else {
-            console.error('[OpenCollections] unexpected data type, using default.');
-            resolve(Utils.clone(DEFAULT_DATA));
+            console.error('[OpenCollections] unexpected data type.');
+            preserveCorruptRaw(raw);
+            reject(dataCorrupt('收藏数据类型异常'));
           }
         });
       } catch (e) {
         console.error('[OpenCollections] storage exception:', e);
-        resolve(Utils.clone(DEFAULT_DATA));
+        reject(storageReadFailed(e && e.message));
       }
     });
   }
@@ -104,7 +159,14 @@
     data.groups = data.groups.map(normalizeGroup).filter(Boolean);
     // 「默认集锦」是受保护分组（system）：旧数据迁移——没有任何存活 system 组时，
     // 给创建最早的存活分组打标（排除每日收件箱等临时组；onInstalled 新装时创建的组直接带 system）。
-    if (!data.groups.some((g) => g.system && !g.deleted)) {
+    const systemGroups = data.groups
+      .filter((g) => g.system && !g.deleted)
+      .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+    if (systemGroups.length > 1) {
+      // 多设备/旧数据可能各自创建 system 组：只保留最早的一个受保护，其余清除标记但不删数据。
+      systemGroups.slice(1).forEach((g) => { g.system = false; });
+    }
+    if (!systemGroups.length) {
       const alive = data.groups.filter((g) => !g.deleted && !Storage.isDailyGroup(g))
         .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
       if (alive.length) alive[0].system = true;
@@ -116,9 +178,14 @@
     if (devOld && !devNew) {
       devOld.name = '开发';
       devOld.updatedAt = Utils.now();
+      devOld.metaUpdatedAt = Utils.now();
     }
-    if (!data.activeGroupId || !data.groups.find((g) => g.id === data.activeGroupId)) {
-      data.activeGroupId = data.groups[0] ? data.groups[0].id : null;
+    // activeGroupId 必须指向存活分组；优先非每日收件箱（OCP-CONF-018）。
+    const active = data.groups.find((g) => g.id === data.activeGroupId && !g.deleted);
+    if (!active) {
+      const nonDaily = data.groups.find((g) => !g.deleted && !Storage.isDailyGroup(g));
+      const alive = nonDaily || data.groups.find((g) => !g.deleted);
+      data.activeGroupId = alive ? alive.id : null;
     }
     return data;
   }
@@ -130,14 +197,24 @@
     let name = typeof g.name === 'string' ? g.name : '未命名分组';
     // 兼容旧版自动生成的「标签页 · 日期」命名，去掉与分区标题重复的前缀。
     if (dailyMatch && name === '标签页 · ' + dailyMatch[1]) name = dailyMatch[1];
+    const createdAt = Number(g.createdAt) || Utils.now();
+    const updatedAt = Number(g.updatedAt) || createdAt;
+    // metaUpdatedAt：名称/颜色的最后修改时间，与卡片内容活动时间分离（OCP-CONF-010）。
+    const metaUpdatedAt = Number(g.metaUpdatedAt) || createdAt;
+    let deletedAt = null;
+    if (g.deletedAt != null) {
+      const n = Number(g.deletedAt);
+      deletedAt = Number.isFinite(n) ? n : null;
+    }
     return {
       id,
       name,
       color: typeof g.color === 'string' ? g.color : Utils.PALETTE[0],
-      createdAt: Number(g.createdAt) || Utils.now(),
-      updatedAt: Number(g.updatedAt) || Number(g.createdAt) || Utils.now(),
+      createdAt,
+      updatedAt,
+      metaUpdatedAt,
       deleted: !!g.deleted,
-      deletedAt: g.deletedAt ? Number(g.deletedAt) : null,
+      deletedAt,
       // system：受保护的「默认集锦」，不可删除，AI 不得改其归属。
       system: !!g.system,
       cards: Array.isArray(g.cards) ? g.cards.map(normalizeCard).filter(Boolean) : []
@@ -146,6 +223,11 @@
 
   function normalizeCard(c) {
     if (!c || typeof c !== 'object') return null;
+    let deletedAt = null;
+    if (c.deletedAt != null) {
+      const n = Number(c.deletedAt);
+      deletedAt = Number.isFinite(n) ? n : null;
+    }
     return {
       id: c.id || Utils.uuid(),
       type: c.type === 'excerpt' ? 'excerpt' : 'page',
@@ -159,7 +241,7 @@
       addedAt: Number(c.addedAt) || Utils.now(),
       updatedAt: Number(c.updatedAt) || Number(c.addedAt) || Utils.now(),
       deleted: !!c.deleted,
-      deletedAt: c.deletedAt ? Number(c.deletedAt) : null,
+      deletedAt,
       // pinned：用户固定条目，AI 整理与重复清理不得移动/删除（随条目同步）。
       pinned: !!c.pinned
     };
@@ -313,6 +395,7 @@
 
   Storage.STORAGE_KEY = STORAGE_KEY;
   Storage.BACKUP_PREFIX = BACKUP_PREFIX;
+  Storage.SETTINGS_BACKUP_PREFIX = SETTINGS_BACKUP_PREFIX;
   Storage.SETTINGS_KEY = SETTINGS_KEY;
   Storage.QUOTA_BYTES = QUOTA_BYTES;
   Storage.QUOTA_SAFETY_BYTES = QUOTA_SAFETY_BYTES;
@@ -352,6 +435,7 @@
         color: color || Utils.PALETTE[Math.floor(Math.random() * Utils.PALETTE.length)],
         createdAt: Utils.now(),
         updatedAt: Utils.now(),
+        metaUpdatedAt: Utils.now(),
         deleted: false,
         deletedAt: null,
         system: !!opts.system,
@@ -369,6 +453,7 @@
       if (!g) throw new Error('分组不存在');
       g.name = name || g.name;
       g.updatedAt = Utils.now();
+      g.metaUpdatedAt = Utils.now();
       return g;
     });
   };
@@ -379,6 +464,7 @@
       if (!g) throw new Error('分组不存在');
       g.color = color;
       g.updatedAt = Utils.now();
+      g.metaUpdatedAt = Utils.now();
       return g;
     });
   };
@@ -400,6 +486,9 @@
         c.deleted = true;
         c.deletedAt = Utils.now();
         c.updatedAt = Utils.now();
+        // 墓碑只保留同步必需字段，避免长期保留大段摘录正文撑满配额（OCP-CONF-043）。
+        c.notes = '';
+        c.excerpt = '';
       });
       if (data.activeGroupId === groupId) {
         const alive = data.groups.find((x) => !x.deleted);
@@ -541,7 +630,7 @@
         if (!backupGroup) continue;
         const backupCard = (backupGroup.cards || []).find((c) => c.id === entry.cardId);
         if (!backupCard) continue;
-        const group = data.groups.find((g) => g.id === entry.groupId);
+        const group = data.groups.find((g) => g.id === entry.groupId && !g.deleted);
         if (!group) continue;
         const existing = group.cards.find((c) => c.id === entry.cardId);
         if (existing) {
@@ -578,9 +667,55 @@
     return cards[0];
   };
 
+  // 原子批量添加：在同一个写锁事务内基于最新数据做跨分组查重，避免“先查后写”被并发绕过
+  // （OCP-CONF-027）。返回 { cards, skipped }；skipped 含命中的分组信息供 UI 提示。
+  Storage.addCardsChecked = async function (groupId, cardInputs, options) {
+    const settings = await Storage.loadSettings();
+    const opts = options || {};
+    const allow = opts.allowDuplicateLinks != null
+      ? !!opts.allowDuplicateLinks
+      : !!(settings.behavior && settings.behavior.allowDuplicateLinks);
+    return Storage.mutate((data) => {
+      const g = data.groups.find((x) => x.id === groupId && !x.deleted);
+      if (!g) throw new Error('分组不存在');
+      const existing = new Map();
+      for (const group of data.groups) {
+        if (group.deleted) continue;
+        for (const card of group.cards) {
+          if (card.deleted) continue;
+          const key = Utils.cardDedupeKey(card);
+          if (key && !existing.has(key)) existing.set(key, { group, card });
+        }
+      }
+      const cards = [];
+      const skipped = [];
+      for (const cardInput of (cardInputs || [])) {
+        const card = cardFromInput(cardInput);
+        const key = Utils.cardDedupeKey(card);
+        if (!allow && key && existing.has(key)) {
+          const hit = existing.get(key);
+          skipped.push({
+            groupId: hit.group.id,
+            groupName: hit.group.name,
+            title: hit.card.title || card.title,
+            cardId: card.id
+          });
+          continue;
+        }
+        g.cards.push(card);
+        cards.push(card);
+        if (key) existing.set(key, { group: g, card });
+      }
+      if (cards.length) g.updatedAt = Utils.now();
+      return { cards, skipped };
+    });
+  };
+
   // 拖拽移动：同组移到末尾；跨组复制到目标组末尾并在源组打墓碑，保证同步不复活。
   Storage.moveCardToGroup = async function (fromGroupId, cardId, toGroupId) {
     if (!fromGroupId || !cardId || !toGroupId) throw new Error('移动参数不完整');
+    const settings = await Storage.loadSettings();
+    const allowDuplicateLinks = !!(settings.behavior && settings.behavior.allowDuplicateLinks);
     return Storage.mutate((data) => {
       const from = data.groups.find((g) => g.id === fromGroupId && !g.deleted);
       if (!from) throw new Error('原分组不存在');
@@ -597,15 +732,29 @@
         return { sameGroup: true, cardId: card.id, sourceGroupId: from.id, targetGroupId: to.id };
       }
 
+      if (!allowDuplicateLinks) {
+        const dup = Storage.findDuplicateCard({ groups: data.groups }, card, { excludeCardId: card.id });
+        if (dup) {
+          const err = new Error('目标分组已存在相同链接：' + dup.group.name);
+          err.code = 'duplicate';
+          err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+          throw err;
+        }
+      }
+
       const copy = Utils.clone(card);
       copy.id = Utils.uuid();
       copy.addedAt = card.addedAt;
       copy.updatedAt = now;
+      // pinned 只属于受保护的默认集锦；拖入普通分组时清除，避免“隐形固定”无法取消（OCP-CONF-019）。
+      if (!to.system) copy.pinned = false;
       to.cards.push(copy);
 
       card.deleted = true;
       card.deletedAt = now;
       card.updatedAt = now;
+      card.notes = '';
+      card.excerpt = '';
       from.updatedAt = now;
       to.updatedAt = now;
       return { sameGroup: false, cardId: copy.id, sourceGroupId: from.id, targetGroupId: to.id };
@@ -619,12 +768,18 @@
   };
 
   // 当天多次收藏追加到同一个每日分组；分组被删除时复活并继续追加。
-  Storage.addCardsToDailyGroup = async function (dateKey, cardInputs) {
+  // 与普通批量添加一样在写锁内做原子查重（OCP-CONF-027）。
+  Storage.addCardsToDailyGroup = async function (dateKey, cardInputs, options) {
     const key = String(dateKey || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) throw new Error('日期格式不正确');
     if (!Array.isArray(cardInputs) || cardInputs.length === 0) {
       throw new Error('没有要收藏的标签页');
     }
+    const settings = await Storage.loadSettings();
+    const opts = options || {};
+    const allow = opts.allowDuplicateLinks != null
+      ? !!opts.allowDuplicateLinks
+      : !!(settings.behavior && settings.behavior.allowDuplicateLinks);
     return Storage.mutate((data) => {
       const id = DAILY_GROUP_PREFIX + key;
       const now = Utils.now();
@@ -638,6 +793,7 @@
           color: Utils.PALETTE[0],
           createdAt: now,
           updatedAt: now,
+          metaUpdatedAt: now,
           deleted: false,
           deletedAt: null,
           cards: []
@@ -648,16 +804,35 @@
         group.deleted = false;
         group.deletedAt = null;
         group.updatedAt = now;
+        group.metaUpdatedAt = now;
         revived = true;
       }
-      const cards = cardInputs.map((cardInput) => {
+      const existing = new Map();
+      for (const g of data.groups) {
+        if (g.deleted) continue;
+        for (const c of g.cards) {
+          if (c.deleted) continue;
+          const k = Utils.cardDedupeKey(c);
+          if (k && !existing.has(k)) existing.set(k, { group: g, card: c });
+        }
+      }
+      const cards = [];
+      const skipped = [];
+      for (const cardInput of cardInputs) {
         const card = cardFromInput(cardInput);
+        const cardKey = Utils.cardDedupeKey(card);
+        if (!allow && cardKey && existing.has(cardKey)) {
+          const hit = existing.get(cardKey);
+          skipped.push({ groupId: hit.group.id, groupName: hit.group.name, title: hit.card.title || card.title });
+          continue;
+        }
         group.cards.push(card);
-        return card;
-      });
+        cards.push(card);
+        if (cardKey) existing.set(cardKey, { group, card });
+      }
       group.updatedAt = now;
       data.activeGroupId = group.id;
-      return { group, cards, created, revived };
+      return { group, cards, created, revived, skipped };
     });
   };
 
@@ -688,6 +863,7 @@
       const baseColorIndex = data.groups.filter((g) => !g.deleted).length;
       const createdGroups = [];
       const reusedGroups = [];
+      const moves = [];
       const updatedSources = new Set();
       let movedCards = 0;
       let skippedDuplicates = 0;
@@ -713,9 +889,10 @@
         if (!name) name = '整理 ' + (i + 1);
         const nameKey = Utils.normalizeName(name);
 
-        // 按规范化名称复用已有分组；所有源分组都不作为复用目标。
+        // 按规范化名称复用已有分组（包括源分组）：staysInSource 已保证卡片原分组与目标同名时不会被移动，
+        // 因此复用同名源分组不会造成自移动，只避免创建重复同名组（OCP-CONF-023）。
         let target = data.groups.find((g) =>
-          !g.deleted && !sourceIdSet.has(g.id) && Utils.normalizeName(g.name) === nameKey);
+          !g.deleted && Utils.normalizeName(g.name) === nameKey);
         const reused = !!target;
 
         if (!target) {
@@ -728,6 +905,7 @@
             color,
             createdAt: now,
             updatedAt: now,
+            metaUpdatedAt: now,
             deleted: false,
             deletedAt: null,
             cards: []
@@ -760,9 +938,19 @@
           copy.addedAt = entry.card.addedAt;
           copy.updatedAt = now;
           target.cards.push(copy);
+          // 记录条目级撤销所需的原卡片快照（内存中返回，不写入 storage）。
+          moves.push({
+            sourceGroupId: entry.group.id,
+            sourceCardId: entry.card.id,
+            targetGroupId: target.id,
+            targetCardId: copy.id,
+            sourceSnapshot: Utils.clone(entry.card)
+          });
           entry.card.deleted = true;
           entry.card.deletedAt = now;
           entry.card.updatedAt = now;
+          entry.card.notes = '';
+          entry.card.excerpt = '';
           updatedSources.add(entry.group);
           movedCards++;
         }
@@ -773,17 +961,67 @@
       }
 
       updatedSources.forEach((g) => { g.updatedAt = now; });
-      return { createdGroups, reusedGroups, movedCards, skippedDuplicates };
+      return { createdGroups, reusedGroups, moves, movedCards, skippedDuplicates };
+    });
+  };
+
+  // 条目级撤销 AI 整理：只回滚本次计划涉及的卡片/新建分组，不覆盖应用后的其它编辑（OCP-CONF-034）。
+  Storage.undoOrganizePlan = async function (undo) {
+    undo = undo || {};
+    const moves = Array.isArray(undo.moves) ? undo.moves : [];
+    const createdGroupIds = Array.isArray(undo.createdGroupIds) ? undo.createdGroupIds : [];
+    if (!moves.length && !createdGroupIds.length) return { restored: 0 };
+    return Storage.mutate((data) => {
+      const now = Utils.now();
+      let restored = 0;
+      for (const move of moves.slice().reverse()) {
+        const target = data.groups.find((g) => g.id === move.targetGroupId);
+        if (target) {
+          const tc = target.cards.find((c) => c.id === move.targetCardId && !c.deleted);
+          if (tc) {
+            tc.deleted = true;
+            tc.deletedAt = now;
+            tc.updatedAt = now;
+            tc.notes = '';
+            tc.excerpt = '';
+          }
+        }
+        const source = data.groups.find((g) => g.id === move.sourceGroupId);
+        if (source && move.sourceSnapshot) {
+          const sc = source.cards.find((c) => c.id === move.sourceCardId);
+          if (sc) {
+            Object.assign(sc, Utils.clone(move.sourceSnapshot));
+            sc.deleted = false;
+            sc.deletedAt = null;
+            sc.updatedAt = now;
+            restored++;
+          }
+        }
+        if (target) target.updatedAt = now;
+        if (source) source.updatedAt = now;
+      }
+      for (const id of createdGroupIds) {
+        const g = data.groups.find((x) => x.id === id);
+        if (g && g.cards.every((c) => c.deleted)) {
+          g.deleted = true;
+          g.deletedAt = now;
+          g.updatedAt = now;
+        }
+      }
+      return { restored };
     });
   };
 
   Storage.updateCard = async function (groupId, cardId, patch) {
+    const settings = await Storage.loadSettings();
+    const allowDuplicateLinks = !!(settings.behavior && settings.behavior.allowDuplicateLinks);
     return Storage.mutate((data) => {
       const g = data.groups.find((x) => x.id === groupId);
       if (!g) throw new Error('分组不存在');
       const c = g.cards.find((x) => x.id === cardId);
       if (!c) throw new Error('卡片不存在');
       const prevUrl = c.url;
+      const prevExcerpt = c.excerpt;
       const allowed = ['title', 'notes', 'favicon', 'url', 'excerpt'];
       for (const k of allowed) {
         if (k in patch) c[k] = typeof patch[k] === 'string' ? patch[k] : c[k];
@@ -791,6 +1029,16 @@
       // 编辑只允许把链接改成 http/https；历史遗留的非网页卡片仍可改标题/笔记（URL 未变时不拦）。
       if (typeof patch.url === 'string' && patch.url !== prevUrl && !Utils.isCollectableUrl(patch.url)) {
         throw notCollectableError(patch.url);
+      }
+      // 编辑 URL/摘录同样要遵守跨分组去重（OCP-CONF-020）。
+      if (!allowDuplicateLinks && (c.url !== prevUrl || c.excerpt !== prevExcerpt)) {
+        const dup = Storage.findDuplicateCard({ groups: data.groups }, c, { excludeCardId: c.id });
+        if (dup) {
+          const err = new Error('已存在相同链接：' + dup.group.name);
+          err.code = 'duplicate';
+          err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
+          throw err;
+        }
       }
       c.updatedAt = Utils.now();
       g.updatedAt = Utils.now();
@@ -869,8 +1117,10 @@
         await Storage.createBackup('import-overwrite');
         const fresh = normalize({ groups: incoming.groups, activeGroupId: null });
         fresh.activeGroupId = fresh.groups[0] ? fresh.groups[0].id : null;
-        await saveRaw(normalize(fresh));
-        return { groups: fresh.groups.length };
+        const normalized = normalize(fresh);
+        await assertQuota(STORAGE_KEY, normalized);
+        await saveRaw(normalized);
+        return { groups: normalized.groups.length };
       });
     }
 
@@ -890,11 +1140,12 @@
           addedCards += ng.cards.length;
           continue;
         }
-        // 分组级冲突取较新；不恢复已删除分组。
+        // 分组级冲突取较新（用组元数据时间）；不恢复已删除分组。
         if (existing.deleted) continue;
-        if (ng.updatedAt >= existing.updatedAt) {
+        if ((ng.metaUpdatedAt || 0) >= (existing.metaUpdatedAt || 0)) {
           existing.name = ng.name;
           existing.color = ng.color;
+          existing.metaUpdatedAt = ng.metaUpdatedAt || Utils.now();
           existing.updatedAt = Utils.now();
         }
         const cardMap = new Map(existing.cards.map((c) => [c.id, c]));
@@ -955,16 +1206,30 @@
   };
 
   // ---- 备份（用于同步前快照）----
+  // 备份和主数据共享 10 MiB 配额：写前腾出保留名额并做配额预检，写后裁剪到最多 10 份，
+  // 避免 AI/去重/失败同步无限累积快照最终阻塞所有保存（OCP-CONF-009）。
   Storage.createBackup = async function (reason) {
     const data = await Storage.load();
+    await Storage.clearOldBackups(9);
     const suffix = Math.random().toString(36).slice(2, 8);
     const key = BACKUP_PREFIX + Date.now() + '-' + (reason || 'manual') + '-' + suffix;
-    return new Promise((resolve, reject) => {
+    await assertQuota(key, data);
+    await new Promise((resolve, reject) => {
       chrome.storage.local.set({ [key]: data }, () => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else resolve(key);
+        if (chrome.runtime.lastError) {
+          const message = chrome.runtime.lastError.message;
+          if (isQuotaMessage(message)) {
+            reject(quotaExceeded(0, estimateBytes(data)));
+          } else {
+            reject(new Error(message));
+          }
+        } else {
+          resolve();
+        }
       });
     });
+    await Storage.clearOldBackups(10);
+    return key;
   };
 
   Storage.listBackups = async function () {
@@ -981,14 +1246,28 @@
   };
 
   Storage.getBackup = async function (key) {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get(key, (items) => {
+        if (chrome.runtime.lastError) reject(storageReadFailed(chrome.runtime.lastError.message));
+        else if (items == null || typeof items !== 'object') reject(storageReadFailed('备份返回数据无效'));
+        else resolve(items[key]);
+      });
+    });
+  };
+
+  Storage.deleteBackup = async function (key) {
+    if (typeof key !== 'string' || !key) return;
     return new Promise((resolve) => {
-      chrome.storage.local.get(key, (items) => resolve(items[key]));
+      chrome.storage.local.remove(key, () => resolve());
     });
   };
 
   Storage.restoreBackup = async function (key) {
     const data = await Storage.getBackup(key);
     if (!data) throw new Error('备份不存在');
+    if (!Array.isArray(data.groups)) {
+      throw new Error('备份格式不正确：不是收藏数据快照');
+    }
     await Storage.save(data);
   };
 
@@ -999,6 +1278,25 @@
     if (!toRemove.length) return;
     return new Promise((resolve) => {
       chrome.storage.local.remove(toRemove, () => resolve());
+    });
+  };
+
+  // 设置导入备份使用独立命名空间：不进入集合备份列表、不会被当集合快照上传或恢复。
+  Storage.clearOldSettingsBackups = async function (keep) {
+    keep = keep || 5;
+    return new Promise((resolve) => {
+      chrome.storage.local.get(null, (items) => {
+        const keys = Object.keys(items || {}).filter((k) => k.startsWith(SETTINGS_BACKUP_PREFIX));
+        const sorted = keys
+          .map((k) => ({ key: k, ts: Number(k.slice(SETTINGS_BACKUP_PREFIX.length).split('-')[0]) || 0 }))
+          .sort((a, b) => (b.ts - a.ts) || b.key.localeCompare(a.key));
+        const toRemove = sorted.slice(keep).map((b) => b.key);
+        if (!toRemove.length) {
+          resolve();
+          return;
+        }
+        chrome.storage.local.remove(toRemove, () => resolve());
+      });
     });
   };
 
@@ -1037,6 +1335,43 @@
 
   function hasPlaintextSecrets(settings) {
     return SECRET_FIELDS.some((field) => readPath(settings, field.path) !== '');
+  }
+
+  // 导出/同步 URL 前剥离 userinfo，避免历史数据把凭据写进设置文件或远端（OCP-CONF-040）。
+  function redactUrlUserinfo(raw) {
+    if (typeof raw !== 'string' || !raw.trim()) return raw;
+    try {
+      const u = new URL(raw);
+      if (!u.username && !u.password) return raw;
+      u.username = '';
+      u.password = '';
+      return u.toString();
+    } catch (e) {
+      return raw;
+    }
+  }
+  function assertSettingsUrls(settings) {
+    if (!settings || typeof settings !== 'object') return;
+    const wd = settings.webdav;
+    if (wd && typeof wd.url === 'string' && wd.url.trim()) {
+      Utils.requireHttpsUrl(wd.url, 'WebDAV 服务器地址');
+    }
+    const ai = settings.ai;
+    if (ai && typeof ai.baseUrl === 'string' && ai.baseUrl.trim()) {
+      Utils.requireHttpsUrl(ai.baseUrl, 'AI 接口地址');
+    }
+  }
+
+  // 远端/导入设置不能替用户在本地首次启用网络功能：本地为 false 时强制保持 false，
+  // 用户必须在本机手动启用并走首次确认（OCP-CONF-014）。
+  function guardNetworkEnabled(local, next) {
+    if (!next || !next.webdav || !next.ai) return;
+    const localEnabled = !!(local && local.webdav && local.webdav.enabled);
+    const localAutoSync = !!(local && local.webdav && local.webdav.autoSync);
+    const localAiEnabled = !!(local && local.ai && local.ai.enabled);
+    if (!localEnabled) next.webdav.enabled = false;
+    if (!localAutoSync) next.webdav.autoSync = false;
+    if (!localAiEnabled) next.ai.enabled = false;
   }
 
   function normalizeSettings(raw) {
@@ -1119,10 +1454,22 @@
   }
 
   Storage.loadSettings = async function () {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(SETTINGS_KEY, (items) => {
-        resolve(normalizeSettings(items[SETTINGS_KEY]));
-      });
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.get(SETTINGS_KEY, (items) => {
+          if (chrome.runtime.lastError) {
+            reject(storageReadFailed(chrome.runtime.lastError.message));
+            return;
+          }
+          if (items == null || typeof items !== 'object') {
+            reject(storageReadFailed('设置返回数据无效'));
+            return;
+          }
+          resolve(normalizeSettings(items[SETTINGS_KEY]));
+        });
+      } catch (e) {
+        reject(storageReadFailed(e && e.message));
+      }
     });
   };
 
@@ -1224,12 +1571,24 @@
   }
 
   function loadSettingsMeta() {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(SETTINGS_META_KEY, (items) => {
-        const raw = items && items[SETTINGS_META_KEY];
-        const keys = raw && typeof raw.keys === 'object' && raw.keys ? raw.keys : {};
-        resolve({ v: 1, keys: Object.assign({}, keys) });
-      });
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.get(SETTINGS_META_KEY, (items) => {
+          if (chrome.runtime.lastError) {
+            reject(storageReadFailed(chrome.runtime.lastError.message));
+            return;
+          }
+          if (items == null || typeof items !== 'object') {
+            reject(storageReadFailed('同步时间戳返回数据无效'));
+            return;
+          }
+          const raw = items[SETTINGS_META_KEY];
+          const keys = raw && typeof raw.keys === 'object' && raw.keys ? raw.keys : {};
+          resolve({ v: 1, keys: Object.assign({}, keys) });
+        });
+      } catch (e) {
+        reject(storageReadFailed(e && e.message));
+      }
     });
   }
   Storage.loadSettingsMeta = loadSettingsMeta;
@@ -1253,6 +1612,12 @@
       writeKeyPath(out, keyPath, Utils.clone(readKeyPath(settings, keyPath)));
       keys[keyPath] = Number(meta.keys[keyPath]) || 0;
     }
+    if (out.webdav && typeof out.webdav.url === 'string') {
+      out.webdav.url = redactUrlUserinfo(out.webdav.url);
+    }
+    if (out.ai && typeof out.ai.baseUrl === 'string') {
+      out.ai.baseUrl = redactUrlUserinfo(out.ai.baseUrl);
+    }
     return { settings: out, keys };
   };
 
@@ -1262,6 +1627,7 @@
     const force = !!(options && options.force);
     const local = await Storage.loadSettings();
     const meta = await loadSettingsMeta();
+    assertSettingsUrls(remoteSettings);
     const next = Utils.clone(local);
     const changed = [];
     for (const keyPath of SYNC_SETTINGS_KEYS) {
@@ -1283,6 +1649,7 @@
     next.security = local.security;
     next.secrets = local.secrets;
     next.secretsV = local.secretsV;
+    guardNetworkEnabled(local, next);
     await writeSettings(normalizeSettings(next));
     await saveSettingsMeta(meta);
     return { changed };
@@ -1444,7 +1811,7 @@
   };
 
   // patch 形如 { standalone: true }；传 null 表示清空全部折叠偏好（恢复默认）。
-  Storage.saveFoldState = async function (patch) {
+  Storage.saveFoldState = locked(async function (patch) {
     if (patch === null) {
       return new Promise((resolve, reject) => {
         chrome.storage.local.remove(FOLD_STATE_KEY, () => {
@@ -1461,7 +1828,7 @@
         else resolve(next);
       });
     });
-  };
+  });
 
   Storage.loadWindowBounds = async function () {
     return new Promise((resolve) => {
@@ -1472,8 +1839,8 @@
     });
   };
 
-  // patch 合并写入，保留未提供字段（windowId 与历史尺寸互不覆盖）。
-  Storage.saveWindowBounds = async function (patch) {
+  // patch 合并写入，保留未提供字段（windowId 与历史尺寸互不覆盖）；写入串行化避免多上下文丢字段。
+  Storage.saveWindowBounds = locked(async function (patch) {
     const current = await Storage.loadWindowBounds();
     const next = Object.assign({}, current, patch);
     return new Promise((resolve, reject) => {
@@ -1482,7 +1849,7 @@
         else resolve(next);
       });
     });
-  };
+  });
 
   // Service Worker 没有 screen 对象，由 management 页面上报可用区域。
   Storage.loadScreenInfo = async function () {
@@ -1585,9 +1952,14 @@
         result.groups.push(Utils.clone(rg));
         continue;
       }
-      // 远端墓碑较新 → 本地也标记删除。比较基准：本地已删除看 deletedAt，否则看最后编辑时间。
-      const lgRef = lg.deleted ? (lg.deletedAt || 0) : lg.updatedAt;
-      if (rg.deleted && rg.deletedAt >= lgRef) {
+      // 远端墓碑较新 → 本地也标记删除。比较基准：本地已删除看 deletedAt，否则看组元数据最后修改时间；
+      // 卡片新增/固定只改 updatedAt，不应让已删除分组复活（OCP-CONF-010）。
+      if (rg.deleted && lg.system) {
+        // 受保护的默认集锦不接受普通合并的远端墓碑，避免保护对象被静默删除（OCP-CONF-011）。
+        continue;
+      }
+      const lgRef = lg.deleted ? (lg.deletedAt || 0) : (lg.metaUpdatedAt || lg.updatedAt || 0);
+      if (rg.deleted && rg.deletedAt > lgRef) {
         lg.deleted = true;
         lg.deletedAt = rg.deletedAt;
         lg.updatedAt = Math.max(lg.updatedAt, rg.updatedAt);
@@ -1597,18 +1969,18 @@
         continue;
       }
       if (lg.deleted) {
-        // 本地已删除，保留本地删除（除非远端更新且未删除——这里取较新）。
-        if (!rg.deleted && rg.updatedAt > (lg.deletedAt || 0)) {
-          // 远端复活了，恢复本地。
+        // 本地已删除，保留本地删除；只有远端分组元数据（重命名/颜色/复活）晚于删除才恢复。
+        if (!rg.deleted && (rg.metaUpdatedAt || 0) > (lg.deletedAt || 0)) {
           Object.assign(lg, Utils.clone(rg));
         }
         continue;
       }
-      // 都活着，分组字段取较新。
-      if (rg.updatedAt > lg.updatedAt) {
+      // 都活着，分组名称/颜色取较新（用组元数据时间，不受卡片操作影响）。
+      if ((rg.metaUpdatedAt || 0) > (lg.metaUpdatedAt || 0)) {
         lg.name = rg.name;
         lg.color = rg.color;
-        lg.updatedAt = rg.updatedAt;
+        lg.metaUpdatedAt = rg.metaUpdatedAt;
+        lg.updatedAt = Math.max(lg.updatedAt, rg.updatedAt);
       }
       // 卡片级合并。
       const cardMap = new Map(lg.cards.map((c) => [c.id, c]));
@@ -1618,7 +1990,7 @@
           lg.cards.push(Utils.clone(rc));
           continue;
         }
-        if (rc.deleted && rc.deletedAt >= (lc.deleted ? (lc.deletedAt || 0) : lc.updatedAt)) {
+        if (rc.deleted && rc.deletedAt > (lc.deleted ? (lc.deletedAt || 0) : lc.updatedAt)) {
           lc.deleted = true;
           lc.deletedAt = rc.deletedAt;
           lc.updatedAt = Math.max(lc.updatedAt, rc.updatedAt);
@@ -1659,6 +2031,7 @@
       cards: { added: 0, updated: 0, deleted: 0 }
     };
     const bGroups = new Map(((before && before.groups) || []).map((g) => [g.id, g]));
+    const aGroups = new Map(((after && after.groups) || []).map((g) => [g.id, g]));
     for (const ag of ((after && after.groups) || [])) {
       const bg = bGroups.get(ag.id);
       if (!bg) {
@@ -1672,6 +2045,7 @@
       else if (bg.deleted && !ag.deleted) stats.groups.added++;
       else if (!bg.deleted && ag.updatedAt !== bg.updatedAt) stats.groups.updated++;
       const bCards = new Map(bg.cards.map((c) => [c.id, c]));
+      const aCards = new Map(ag.cards.map((c) => [c.id, c]));
       for (const ac of ag.cards) {
         const bc = bCards.get(ac.id);
         if (!bc) {
@@ -1682,6 +2056,16 @@
         else if (bc.deleted && !ac.deleted) stats.cards.added++;
         else if (!bc.deleted && !ac.deleted && ac.updatedAt !== bc.updatedAt) stats.cards.updated++;
       }
+      // after 中完全消失的卡片也要算删除（例如仅下载替换后本地独有卡片消失）。
+      for (const bc of bg.cards) {
+        if (!bc.deleted && !aCards.has(bc.id)) stats.cards.deleted++;
+      }
+    }
+    // before 中完全消失的分组/卡片：视为删除（OCP-CONF-029 统计失真）。
+    for (const bg of ((before && before.groups) || [])) {
+      if (bg.deleted || aGroups.has(bg.id)) continue;
+      stats.groups.deleted++;
+      stats.cards.deleted += bg.cards.filter((c) => !c.deleted).length;
     }
     return stats;
   };
@@ -1756,6 +2140,12 @@
     const out = {};
     for (const keyPath of EXPORTABLE_SETTINGS_KEYS) {
       writeKeyPath(out, keyPath, Utils.clone(readKeyPath(settings, keyPath)));
+    }
+    if (out.webdav && typeof out.webdav.url === 'string') {
+      out.webdav.url = redactUrlUserinfo(out.webdav.url);
+    }
+    if (out.ai && typeof out.ai.baseUrl === 'string') {
+      out.ai.baseUrl = redactUrlUserinfo(out.ai.baseUrl);
     }
     const sensitive = {};
     for (const keyPath of SENSITIVE_MARKERS) {
@@ -1833,7 +2223,9 @@
   Storage.applySettingsExport = locked(async function (incomingSettings, mode) {
     const local = await Storage.loadSettings();
     const localMeta = await loadSettingsMeta();
-    const backupKey = BACKUP_PREFIX + Date.now() + '-settings-import-' + Math.random().toString(36).slice(2, 8);
+    assertSettingsUrls(incomingSettings);
+    const backupKey = SETTINGS_BACKUP_PREFIX + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    await assertQuota(backupKey, { __settingsBackup: true, settings: local, meta: localMeta });
     await new Promise((resolve, reject) => {
       chrome.storage.local.set({
         [backupKey]: { __settingsBackup: true, settings: local, meta: localMeta }
@@ -1842,6 +2234,7 @@
         else resolve();
       });
     });
+    await Storage.clearOldSettingsBackups(5);
     const next = Utils.clone(local);
     const applied = [];
     const stampNow = Utils.now();
@@ -1872,6 +2265,8 @@
     next.security = local.security;
     next.secrets = local.secrets;
     next.secretsV = local.secretsV;
+    // 本地未启用网络功能时，导入不能替用户打开（首次启用必须走确认流程，OCP-CONF-014）。
+    guardNetworkEnabled(local, next);
     await writeSettings(normalizeSettings(next));
     await saveSettingsMeta(meta);
     return { backupKey, applied };
@@ -1879,8 +2274,16 @@
 
   // 回滚设置导入：从设置专用备份恢复完整设置与同步时间戳。
   Storage.restoreSettingsBackup = locked(async function (key) {
-    const raw = await new Promise((resolve) => {
-      chrome.storage.local.get(key, (items) => resolve(items && items[key]));
+    if (typeof key !== 'string' ||
+      !(key.startsWith(SETTINGS_BACKUP_PREFIX) || key.startsWith(BACKUP_PREFIX))) {
+      throw new Error('设置备份键不合法');
+    }
+    const raw = await new Promise((resolve, reject) => {
+      chrome.storage.local.get(key, (items) => {
+        if (chrome.runtime.lastError) reject(storageReadFailed(chrome.runtime.lastError.message));
+        else if (items == null || typeof items !== 'object') reject(storageReadFailed('设置备份返回数据无效'));
+        else resolve(items[key]);
+      });
     });
     if (!raw || raw.__settingsBackup !== true || !raw.settings) {
       throw new Error('设置备份不存在或格式不正确');

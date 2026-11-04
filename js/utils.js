@@ -23,8 +23,9 @@
 
   // 格式化时间戳为本地可读字符串。
   Utils.formatTime = function (ts) {
-    if (!ts) return '';
-    const d = new Date(ts);
+    if (!ts || !Number.isFinite(Number(ts))) return '';
+    const d = new Date(Number(ts));
+    if (!Number.isFinite(d.getTime())) return '';
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   };
 
@@ -36,8 +37,9 @@
 
   // 卡片上显示的添加时间：今天 / 昨天 / 月日 / 跨年只显示日期。
   Utils.formatAddedTime = function (ts) {
-    if (!ts) return '';
-    const d = new Date(ts);
+    if (!ts || !Number.isFinite(Number(ts))) return '';
+    const d = new Date(Number(ts));
+    if (!Number.isFinite(d.getTime())) return '';
     const now = new Date();
     const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
     const sameDay = d.getFullYear() === now.getFullYear() &&
@@ -80,6 +82,9 @@
     }
     if (url.protocol !== 'https:') {
       throw new Error(name + '必须使用 https://（已拒绝明文 http，避免凭据与内容在传输中被窃听）');
+    }
+    if (url.username || url.password) {
+      throw new Error(name + '不能包含用户名或密码，请把凭据分别填写在用户名/密码字段');
     }
     return url;
   };
@@ -126,8 +131,11 @@
     for (const key of keys) {
       if (TRACKING_PARAMS.test(key)) params.delete(key);
     }
-    params.sort();
-    const query = params.toString();
+    // URLSearchParams.sort() 只按键排序，同名参数值顺序仍会不同；按 key+value 排序以稳定去重。
+    const query = Array.from(params.entries())
+      .sort((a, b) => (a[0] === b[0] ? String(a[1]).localeCompare(String(b[1])) : a[0].localeCompare(b[0])))
+      .map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v))
+      .join('&');
     return host + path + (query ? '?' + query : '');
   };
 
@@ -212,7 +220,9 @@
   // 截断字符串。
   Utils.truncate = function (s, n) {
     s = String(s || '');
-    return s.length > n ? s.slice(0, n) + '…' : s;
+    if (s.length <= n) return s;
+    if (n <= 0) return '';
+    return s.slice(0, Math.max(0, n - 1)) + '…';
   };
 
   // 判断是否为 http(s) URL。
@@ -245,7 +255,12 @@
       if (out.length >= 12) out.splice(11);
       out.push('其他');
     }
-    return out.slice(0, 12);
+    const final = out.slice(0, 12);
+    // 若「其他」原本排在第 12 位之后，上面的 slice 会把它截掉；这里重新预留兜底槽位。
+    if (final.length && !final.some((c) => Utils.normalizeName(c) === '其他')) {
+      return out.slice(0, 11).concat('其他');
+    }
+    return final;
   };
 
   // 生成带 ID 的分组默认名。

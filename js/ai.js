@@ -17,6 +17,18 @@
     return (h >>> 0).toString(36);
   }
 
+  // 64 位左右的双散列：降低内容指纹/缓存键碰撞概率（OCP-CONF-045）。
+  function stableHash(input) {
+    let h1 = 5381;
+    let h2 = 52711;
+    for (let i = 0; i < input.length; i++) {
+      const c = input.charCodeAt(i);
+      h1 = ((h1 << 5) + h1 + c) | 0;
+      h2 = (h2 ^ c) * 33 | 0;
+    }
+    return (h1 >>> 0).toString(36) + '-' + (h2 >>> 0).toString(36);
+  }
+
   function makeErr(message, code, status, detail) {
     const err = new Error(message);
     err.code = code || 'ai';
@@ -128,6 +140,11 @@
       }
     }
 
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+    };
+
     let resp;
     try {
       resp = await fetch(url, {
@@ -142,22 +159,26 @@
         cache: 'no-store'
       });
     } catch (e) {
+      cleanup();
       if (cancelled) throw makeErr('已取消整理', 'cancelled');
       if (timedOut) throw makeErr(`请求超时（${Math.round(timeout / 1000)} 秒）`, 'timeout');
       throw makeErr('网络错误：无法连接到 AI 接口，请检查地址与网络', 'network');
-    } finally {
-      clearTimeout(timer);
-      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
     }
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
+      cleanup();
       throw classifyError(resp.status, text);
     }
+    // 计时器/取消监听保持到 body 读取完成，避免服务器返回响应头后卡住 body 时无限等待（OCP-CONF-012）。
     try {
       return await resp.json();
     } catch (e) {
+      if (cancelled) throw makeErr('已取消整理', 'cancelled');
+      if (timedOut) throw makeErr(`请求超时（${Math.round(timeout / 1000)} 秒）`, 'timeout');
       throw makeErr('AI 接口返回的不是有效 JSON', 'parse');
+    } finally {
+      cleanup();
     }
   }
 
@@ -177,10 +198,11 @@
   }
 
   function contentFingerprint(card) {
-    const raw = [card.type, card.title, card.url, card.sourceUrl, card.sourceTitle, card.notes, card.excerpt]
-      .map((v) => String(v || ''))
-      .join('|');
-    return 'cf' + hashString(raw);
+    // 用 JSON 序列化保留字段边界，避免字段内含 '|' 改变拼接结构（OCP-CONF-045）。
+    const raw = JSON.stringify([
+      card.type, card.title, card.url, card.sourceUrl, card.sourceTitle, card.notes, card.excerpt
+    ].map((v) => String(v || '')));
+    return 'cf' + stableHash(raw);
   }
 
   function cacheKey(card, version) {
@@ -306,13 +328,28 @@
   }
 
   // 把本地缓存的分类结果合并进 AI 方案；缓存命中不再消耗 token。
+  // 缓存分类同样受 MAX_GROUPS 限制，超出的非「其他」分类归入「其他」（OCP-CONF-033）。
   function mergeCachedGroups(groups, cached) {
+    const otherKey = Utils.normalizeName('其他');
+    const nonOtherCount = () => groups.filter((g) => Utils.normalizeName(g.name) !== otherKey).length;
+    let otherGroup = groups.find((g) => Utils.normalizeName(g.name) === otherKey) || null;
     for (const item of cached || []) {
       if (!item || !item.cardId || !item.category) continue;
       let g = groups.find((x) => Utils.normalizeName(x.name) === Utils.normalizeName(item.category));
       if (!g) {
-        g = { name: String(item.category).trim(), cardIds: [], reason: '本地缓存' };
-        groups.push(g);
+        const isOther = Utils.normalizeName(item.category) === otherKey;
+        if (!isOther && nonOtherCount() >= MAX_GROUPS) {
+          g = groups.find((x) => Utils.normalizeName(x.name) === otherKey);
+          if (!g) {
+            g = { name: '其他', cardIds: [], reason: '超出分类上限，归入其他' };
+            groups.push(g);
+          }
+          otherGroup = g;
+        } else {
+          g = { name: String(item.category).trim(), cardIds: [], reason: '本地缓存' };
+          groups.push(g);
+          if (isOther) otherGroup = g;
+        }
       }
       if (!g.cardIds.includes(item.cardId)) g.cardIds.push(item.cardId);
     }
@@ -352,10 +389,18 @@
       max_tokens: 8,
       stream: false
     });
+    const choices = data && data.choices;
+    if (!Array.isArray(choices) || !choices.length) {
+      throw makeErr('AI 接口返回空 choices：请检查接口地址、模型名称或服务端状态', 'parse');
+    }
+    const reply = extractContent(data).trim();
+    if (!reply) {
+      throw makeErr('AI 接口返回空内容：请检查模型是否可用', 'parse');
+    }
     return {
       ok: true,
       model: (data && data.model) || cfg.model,
-      reply: extractContent(data).trim()
+      reply
     };
   };
 
