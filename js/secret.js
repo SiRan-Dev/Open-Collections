@@ -66,15 +66,25 @@
     return webcrypto().subtle.importKey('raw', bytes, { name: 'AES-GCM', length: 256 }, true, usages);
   }
 
+  // 读取保险库记录。必须区分「键不存在」与「读取失败」：前者可以安全地创建新保险库，
+  // 后者若被当成“不存在”会覆盖旧记录，使旧凭据永久无法解密（OCP-CONF-015）。
   function readVaultRaw() {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       try {
         chrome.storage.local.get(VAULT_KEY, (items) => {
-          const raw = items && items[VAULT_KEY];
+          if (chrome.runtime.lastError) {
+            reject(new Error('读取本地保险库失败：' + chrome.runtime.lastError.message));
+            return;
+          }
+          if (items == null || typeof items !== 'object') {
+            reject(new Error('读取本地保险库失败：返回数据无效'));
+            return;
+          }
+          const raw = items[VAULT_KEY];
           resolve(raw && typeof raw === 'object' ? raw : null);
         });
       } catch (e) {
-        resolve(null);
+        reject(e);
       }
     });
   }
@@ -93,17 +103,41 @@
   }
 
   function removeVaultRaw() {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       try {
-        chrome.storage.local.remove(VAULT_KEY, () => resolve());
+        chrome.storage.local.remove(VAULT_KEY, () => {
+          if (chrome.runtime.lastError) reject(new Error('删除本地保险库失败：' + chrome.runtime.lastError.message));
+          else resolve();
+        });
       } catch (e) {
-        resolve();
+        reject(e);
       }
     });
   }
 
   let memoryKey = null;
+  let memoryKeyFingerprint = '';
   let ensurePromise = null;
+
+  // 保险库记录指纹：其他上下文清除/重建保险库时，本上下文必须丢弃旧的内存密钥，
+  // 否则会用旧密钥加密新凭据，生成无法解密的孤儿密文（OCP-CONF-016）。
+  function vaultFingerprint(record) {
+    if (!record || typeof record.deviceKey !== 'string' || !record.wrappedKey) return '';
+    const w = record.wrappedKey;
+    return [record.deviceKey, w.iv || '', w.v || ''].join('|');
+  }
+
+  function forgetMemoryKey() {
+    memoryKey = null;
+    memoryKeyFingerprint = '';
+  }
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local' || !changes || !changes[VAULT_KEY]) return;
+      forgetMemoryKey();
+    });
+  }
 
   // 首次创建 / 解封必须串行：两个上下文同时判断“没有保险库”会各自生成一把密钥，
   // 后写入的记录覆盖先写入的，先写入一方加密的凭据将永远无法解密。
@@ -122,6 +156,7 @@
       return memoryKey;
     }
     memoryKey = await unwrapVault(record);
+    memoryKeyFingerprint = vaultFingerprint(record);
     return memoryKey;
   }
 
@@ -141,6 +176,7 @@
     };
     await writeVaultRaw(record);
     memoryKey = vaultKey;
+    memoryKeyFingerprint = vaultFingerprint(record);
     return record;
   }
 
@@ -161,8 +197,19 @@
     MIGRATION_ITERATIONS: MIGRATION_ITERATIONS,
 
     // 启动自动解封；无保险库时自动创建。全程无感。
+    // 缓存命中时校验 storage 中的 vault 记录指纹：其他上下文清除/重建保险库后，
+    // 本上下文不能继续使用旧密钥（OCP-CONF-016）。
     async ensureKey() {
-      if (memoryKey) return memoryKey;
+      if (memoryKey) {
+        if (!memoryKeyFingerprint) return memoryKey;
+        try {
+          const record = await readVaultRaw();
+          if (record && vaultFingerprint(record) === memoryKeyFingerprint) return memoryKey;
+        } catch (e) {
+          throw e;
+        }
+        forgetMemoryKey();
+      }
       if (ensurePromise) return ensurePromise;
       ensurePromise = withVaultLock(ensureKeyNow).finally(() => { ensurePromise = null; });
       return ensurePromise;
@@ -180,9 +227,16 @@
     },
 
     // 清除本地密钥：丢弃保险库；调用方负责同时清除已加密凭据（不可逆）。
+    // 等待在途 ensureKey 后删除记录，避免“清空后又立刻被 ensureKey 重建”。
     async clear() {
-      memoryKey = null;
-      await removeVaultRaw();
+      forgetMemoryKey();
+      try {
+        if (ensurePromise) await ensurePromise;
+      } catch (e) {}
+      await withVaultLock(async () => {
+        await removeVaultRaw();
+      });
+      forgetMemoryKey();
     },
 
     encrypt(key, text) {
@@ -200,6 +254,12 @@
       if (!security || !security.salt || !security.check) {
         throw new Error('旧版加密数据不完整，无法迁移');
       }
+      let salt;
+      try {
+        salt = fromB64(security.salt);
+      } catch (e) {
+        throw new Error('旧版加密数据的 salt 已损坏，无法迁移');
+      }
       const c = webcrypto();
       const material = await c.subtle.importKey(
         'raw',
@@ -211,7 +271,7 @@
       const key = await c.subtle.deriveKey(
         {
           name: 'PBKDF2',
-          salt: fromB64(security.salt),
+          salt,
           iterations: Number(security.iterations) || MIGRATION_ITERATIONS,
           hash: 'SHA-256'
         },
@@ -224,7 +284,7 @@
       try {
         plain = await decryptText(key, security.check);
       } catch (e) {
-        throw new Error('旧主密码不正确');
+        throw new Error('旧主密码不正确或旧版密文已损坏');
       }
       if (plain !== CANARY) throw new Error('旧主密码不正确');
       return key;

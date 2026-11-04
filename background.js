@@ -3,16 +3,44 @@ importScripts('js/utils.js', 'js/secret.js', 'js/storage.js', 'js/webdav.js');
 
 const MANAGEMENT_PAGE = 'management.html';
 
+// ---- 侧边栏入口与工具栏降级 ----
+// 支持 sidePanel 时让图标直接打开侧边栏；若 setPanelBehavior 被策略/环境拒绝，
+// 必须降级注册 action.onClicked，否则工具栏图标会完全无响应（OCP-CONF-038）。
+let actionFallbackRegistered = false;
+function registerActionFallback() {
+  if (actionFallbackRegistered) return;
+  actionFallbackRegistered = true;
+  if (!chrome.action || !chrome.action.onClicked) return;
+  chrome.action.onClicked.addListener(() => {
+    openManagementWindow().then((ok) => {
+      if (!ok) notifyUI({ type: 'error', message: '无法打开独立管理窗口' });
+    }).catch((e) => notifyUI({
+      type: 'error',
+      message: '无法打开独立管理窗口：' + (e && e.message ? e.message : String(e))
+    }));
+  });
+}
+
+function installSidePanelBehavior() {
+  if (!chrome.sidePanel || typeof chrome.sidePanel.setPanelBehavior !== 'function') {
+    registerActionFallback();
+    return Promise.resolve(false);
+  }
+  return Promise.resolve()
+    .then(() => chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }))
+    .then(() => true)
+    .catch((e) => {
+      console.warn('[OpenCollections] setPanelBehavior failed:', e);
+      registerActionFallback();
+      return false;
+    });
+}
+
+installSidePanelBehavior();
+
 // ---- 安装与启动 ----
 chrome.runtime.onInstalled.addListener(async () => {
-  try {
-    // 让点击扩展图标时打开侧边栏。
-    if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
-      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    }
-  } catch (e) {
-    console.warn('[OpenCollections] setPanelBehavior failed:', e);
-  }
+  await installSidePanelBehavior();
 
   // 若没有数据，创建默认分组。
   try {
@@ -27,21 +55,16 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 
   // 注册自动同步闹钟（如果设置开启）。
-  await rescheduleAutoSync();
+  try {
+    await rescheduleAutoSync();
+  } catch (e) {
+    console.warn('[OpenCollections] reschedule auto sync failed:', e);
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
   rescheduleAutoSync().catch((e) => console.warn('[OpenCollections] reschedule auto sync failed:', e));
 });
-
-// 点击工具栏图标（_execute_action）：支持的浏览器直接打开侧边栏（openPanelOnActionClick）；
-// 仅在不支持 sidePanel API 的环境，点击图标才降级为打开独立窗口（快捷键命令不做此降级）。
-if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
-  // 已经在 onInstalled 中设置；这里再尝试一次以防 SW 重启。
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-} else {
-  chrome.action.onClicked.addListener(() => openManagementWindow());
-}
 
 // ---- 工具：获取「最近活跃的普通网页标签」----
 // 仅用于批量收藏定位窗口（get-recent-web-window）。
@@ -53,7 +76,12 @@ function isWebTabUrl(url) {
 }
 
 async function trackWebTab(tab) {
-  if (!tab || typeof tab.id !== 'number' || tab.id < 0 || !isWebTabUrl(tab.url)) return;
+  if (!tab || typeof tab.id !== 'number' || tab.id < 0) return;
+  if (!isWebTabUrl(tab.url)) {
+    // 导航到内部页/本地文件时，旧网页记录不能继续被当作“最近网页标签”。
+    await clearRecentWebTab(tab.id);
+    return;
+  }
   const record = { id: tab.id, windowId: tab.windowId, url: tab.url, title: tab.title || tab.url };
   try {
     if (chrome.storage.session) {
@@ -64,23 +92,47 @@ async function trackWebTab(tab) {
   } catch (e) {}
 }
 
+async function removeRecentWebTabRaw() {
+  try {
+    if (chrome.storage.session) await chrome.storage.session.remove(RECENT_TAB_KEY);
+    else globalThis.__recentWebTab = null;
+  } catch (e) {}
+}
+
 async function readRecentWebTab() {
+  let recent = null;
   try {
     if (chrome.storage.session) {
       const items = await chrome.storage.session.get(RECENT_TAB_KEY);
-      return (items && items[RECENT_TAB_KEY]) || null;
+      recent = (items && items[RECENT_TAB_KEY]) || null;
     }
   } catch (e) {}
-  return globalThis.__recentWebTab || null;
+  if (!recent) recent = globalThis.__recentWebTab || null;
+  if (!recent || typeof recent.id !== 'number') return null;
+  try {
+    const tab = await chrome.tabs.get(recent.id);
+    if (!tab || !isWebTabUrl(tab.url)) {
+      await removeRecentWebTabRaw();
+      return null;
+    }
+    return Object.assign({}, recent, { windowId: tab.windowId, url: tab.url, title: tab.title || recent.title });
+  } catch (e) {
+    await removeRecentWebTabRaw();
+    return null;
+  }
 }
 
 async function clearRecentWebTab(tabId) {
-  const recent = await readRecentWebTab();
+  let recent = null;
+  try {
+    if (chrome.storage.session) {
+      const items = await chrome.storage.session.get(RECENT_TAB_KEY);
+      recent = (items && items[RECENT_TAB_KEY]) || null;
+    }
+  } catch (e) {}
+  if (!recent) recent = globalThis.__recentWebTab || null;
   if (recent && recent.id === tabId) {
-    try {
-      if (chrome.storage.session) await chrome.storage.session.remove(RECENT_TAB_KEY);
-      else globalThis.__recentWebTab = null;
-    } catch (e) {}
+    await removeRecentWebTabRaw();
   }
 }
 
@@ -153,6 +205,18 @@ async function getActiveTab() {
   return tab || null;
 }
 
+// activeGroupId 可能指向已删除分组（同步/导入后）；写入口回退到第一个存活分组，避免快捷键收藏持续报错。
+async function getActiveGroupIdForWrite() {
+  const data = await Storage.load();
+  const groups = Array.isArray(data && data.groups) ? data.groups : [];
+  const active = groups.find((g) => g && g.id === data.activeGroupId && !g.deleted);
+  if (active) return active.id;
+  const nonDaily = groups.find((g) => g && !g.deleted &&
+    !(typeof Storage.isDailyGroup === 'function' && Storage.isDailyGroup(g)));
+  const alive = nonDaily || groups.find((g) => g && !g.deleted);
+  return alive ? alive.id : null;
+}
+
 // 构造 favicon URL（依赖 favicon 权限）。
 function faviconUrlFor(url) {
   if (!url) return '';
@@ -169,7 +233,7 @@ async function addCurrentPage() {
   if (!tab || !tab.url || !Utils.isCollectableUrl(tab.url)) {
     throw notCollectableError(tab && tab.url);
   }
-  const groupId = await Storage.getActiveGroupId();
+  const groupId = await getActiveGroupIdForWrite();
   if (!groupId) throw new Error('请先创建一个分组');
   const input = {
     type: 'page',
@@ -178,20 +242,15 @@ async function addCurrentPage() {
     favicon: faviconUrlFor(tab.url)
   };
 
-  // 防重复开启时命中已存在条目直接跳过；调用方只展示非阻塞提示，不再询问是否破例添加。
-  const settings = await Storage.loadSettings();
-  if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
-    const data = await Storage.load();
-    const dup = Storage.findDuplicateCard(data, input);
-    if (dup) {
-      const err = new Error(`该链接已存在于「${dup.group.name}」`);
-      err.code = 'duplicate';
-      err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
-      throw err;
-    }
+  // 原子添加：查重与写入在同一个 storage 写锁内，避免跨上下文并发绕过（OCP-CONF-027）。
+  const res = await Storage.addCardsChecked(groupId, [input]);
+  if (res.skipped.length) {
+    const hit = res.skipped[0];
+    const err = new Error(`该链接已存在于「${hit.groupName}」`);
+    err.code = 'duplicate';
+    err.duplicate = { groupId: hit.groupId, groupName: hit.groupName, title: hit.title };
+    throw err;
   }
-
-  await Storage.addCard(groupId, input);
   return tab.title || tab.url;
 }
 
@@ -238,7 +297,7 @@ async function saveSelection() {
   const truncated = originalChars > EXCERPT_MAX_CHARS;
   const excerpt = truncated ? selection.slice(0, EXCERPT_MAX_CHARS) : selection;
 
-  const groupId = await Storage.getActiveGroupId();
+  const groupId = await getActiveGroupIdForWrite();
   if (!groupId) throw new Error('请先创建一个分组');
   const input = {
     type: 'excerpt',
@@ -250,20 +309,15 @@ async function saveSelection() {
     sourceUrl: tab.url
   };
 
-  // 摘录沿用同一防重复策略：命中直接跳过，不弹确认，也不提供破例添加。
-  const settings = await Storage.loadSettings();
-  if (!(settings.behavior && settings.behavior.allowDuplicateLinks)) {
-    const data = await Storage.load();
-    const dup = Storage.findDuplicateCard(data, input);
-    if (dup) {
-      const err = new Error(`该摘录已存在于「${dup.group.name}」`);
-      err.code = 'duplicate';
-      err.duplicate = { groupId: dup.group.id, groupName: dup.group.name, title: dup.card.title };
-      throw err;
-    }
+  // 摘录沿用同一防重复策略：命中直接跳过，不弹确认，也不提供破例添加；查重在写锁内原子执行。
+  const res = await Storage.addCardsChecked(groupId, [input]);
+  if (res.skipped.length) {
+    const hit = res.skipped[0];
+    const err = new Error(`该摘录已存在于「${hit.groupName}」`);
+    err.code = 'duplicate';
+    err.duplicate = { groupId: hit.groupId, groupName: hit.groupName, title: hit.title };
+    throw err;
   }
-
-  await Storage.addCard(groupId, input);
   return { chars: originalChars, savedChars: excerpt.length, truncated };
 }
 
@@ -342,7 +396,7 @@ async function openManagementWindow() {
     });
   } catch (e) {
     console.error('[OpenCollections] create management window failed:', e);
-    return;
+    return false;
   }
   if (win && win.id != null) {
     await Storage.saveWindowBounds({
@@ -352,6 +406,7 @@ async function openManagementWindow() {
       height: size.height
     }).catch(() => {});
   }
+  return true;
 }
 
 // 用户手动调整管理窗口大小后记住新尺寸（防抖）；只认我们创建的窗口 id。
@@ -415,7 +470,12 @@ chrome.commands.onCommand.addListener((command) => {
         ? { type: 'info', message: duplicateSkipMessage(e, true) }
         : { type: 'error', message: e.message }));
   } else if (command === 'open-management-window') {
-    openManagementWindow();
+    openManagementWindow().then((ok) => {
+      if (!ok) notifyUI({ type: 'error', message: '无法打开独立管理窗口' });
+    }).catch((e) => notifyUI({
+      type: 'error',
+      message: '无法打开独立管理窗口：' + (e && e.message ? e.message : String(e))
+    }));
   }
 });
 
@@ -453,9 +513,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }));
       return true;
     case 'open-window':
-      openManagementWindow();
-      sendResponse({ ok: true });
-      return false;
+      openManagementWindow()
+        .then((ok) => sendResponse(ok ? { ok: true } : { ok: false, error: '无法打开独立管理窗口' }))
+        .catch((e) => sendResponse({ ok: false, error: e && e.message ? e.message : String(e) }));
+      return true;
     case 'get-recent-web-window':
       readRecentWebTab()
         .then((recent) => sendResponse({ ok: true, windowId: recent ? recent.windowId : null }))
@@ -520,22 +581,33 @@ function notifyUI(payload) {
 // ---- 自动同步闹钟 ----
 const AUTO_SYNC_ALARM = 'open-collections-auto-sync';
 let activeSyncAbort = null;
+let autoSyncRescheduleChain = Promise.resolve();
 
-async function rescheduleAutoSync() {
-  if (!chrome.alarms) return;
-  const settings = await Storage.loadSettings();
-  await chrome.alarms.clear(AUTO_SYNC_ALARM);
-  if (settings.webdav && settings.webdav.enabled && settings.webdav.autoSync &&
-    settings.webdav.url) {
+function isAutoSyncEligible(settings) {
+  const wd = settings && settings.webdav;
+  return !!(wd && wd.enabled === true && wd.autoSync === true &&
+    typeof wd.url === 'string' && wd.url.trim());
+}
+
+function rescheduleAutoSync() {
+  if (!chrome.alarms) return Promise.resolve();
+  const run = async () => {
+    const settings = await Storage.loadSettings();
+    await chrome.alarms.clear(AUTO_SYNC_ALARM);
+    if (!isAutoSyncEligible(settings)) return;
     const minutes = Math.max(5, Number(settings.webdav.intervalMinutes) || 30);
     chrome.alarms.create(AUTO_SYNC_ALARM, { periodInMinutes: minutes });
-  }
+  };
+  const result = autoSyncRescheduleChain.then(run, run);
+  autoSyncRescheduleChain = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === AUTO_SYNC_ALARM) {
     Storage.loadSettings().then((settings) => {
-      if (!settings.webdav || settings.webdav.enabled !== true) {
+      // alarm 可能残留自旧设置；每次触发都重新校验 enabled/autoSync/url（OCP-CONF-022）。
+      if (!isAutoSyncEligible(settings)) {
         chrome.alarms.clear(AUTO_SYNC_ALARM);
         return;
       }
@@ -550,6 +622,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         .finally(() => {
           if (activeSyncAbort === controller) activeSyncAbort = null;
         });
-    }).catch(() => {});
+    }).catch((e) => console.warn('[OpenCollections] auto sync settings read failed:', e));
   }
 });
+
+// 设置导入/远端合并/清除密钥都会直接写 settings，不会经过 webdav-reschedule 消息；统一监听重排。
+if (chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes || !changes[Storage.SETTINGS_KEY]) return;
+    rescheduleAutoSync().catch((e) => console.warn('[OpenCollections] reschedule after settings change failed:', e));
+  });
+}

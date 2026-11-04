@@ -66,6 +66,7 @@
     if (status === 401) return { code: 401, message: '认证失败（401）：请检查用户名与密码' };
     if (status === 403) return { code: 403, message: '权限不足（403）：账户无权访问该目录' };
     if (status === 404) return { code: 404, message: '路径不存在（404）：请检查服务器地址与远端目录' };
+    if (status === 412) return { code: 412, message: '远端文件已被其他设备修改（412）：已停止写入，请重新同步' };
     if (status >= 500) return { code: status, message: `服务器错误（${status}）` };
     if (err && err.name === 'TypeError' && /Failed to fetch|NetworkError/i.test(err.message)) {
       return { code: 0, message: '网络错误：无法连接到 WebDAV 服务器，请检查地址与网络' };
@@ -79,7 +80,8 @@
     let origin = '*://*/*';
     try {
       const u = new URL(url);
-      origin = `${u.protocol}//${u.host}/*`;
+      // Chrome match pattern 不支持端口；与 app.js 的 requestOriginPermission 保持一致。
+      origin = `${u.protocol}//${u.hostname}/*`;
     } catch (e) {}
     const opts = { origins: [origin] };
     if (chrome.permissions.contains) {
@@ -112,6 +114,10 @@
       cancelled = true;
       if (controller) controller.abort();
     };
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (external) external.removeEventListener('abort', onAbort);
+    };
     if (controller && external) {
       if (external.aborted) {
         cancelled = true;
@@ -129,27 +135,39 @@
         signal: controller ? controller.signal : undefined
       });
     } catch (e) {
+      cleanup();
       if (cancelled) throw { code: 'cancelled', message: '同步已取消' };
       if (timedOut) {
         throw { code: 0, message: '请求超时（20 秒）：服务器无响应或网络过慢' };
       }
       throw classifyError(e, 0);
-    } finally {
-      if (timer) clearTimeout(timer);
-      if (external) external.removeEventListener('abort', onAbort);
     }
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
+      cleanup();
       throw classifyError(new Error(text || resp.statusText), resp.status);
     }
+    // 调用方读取响应体（readRemoteJson）后再 cleanup；否则超时/取消不会覆盖 body 读取，
+    // 服务器返回响应头后卡住响应体会让同步永久挂起（OCP-CONF-012）。
+    resp._davCleanup = cleanup;
     return resp;
   }
 
   // 读取远端 JSON；404 返回 null，解析失败给出可读错误。
+  // 传入 options 时把响应 ETag 写入 options.etag，供后续 PUT 的 If-Match 使用。
   async function readRemoteJson(wd, url, options) {
     try {
       const resp = await davRequest(url, wd, { method: 'GET', signal: options && options.signal });
-      const text = await resp.text();
+      let text;
+      try {
+        text = await resp.text();
+      } finally {
+        if (typeof resp._davCleanup === 'function') resp._davCleanup();
+      }
+      if (options && typeof options === 'object') {
+        options.etag = resp.headers && typeof resp.headers.get === 'function'
+          ? resp.headers.get('ETag') : null;
+      }
       if (!text) return null;
       try {
         return JSON.parse(text);
@@ -163,23 +181,37 @@
   }
 
   async function writeRemoteJson(wd, url, obj, options) {
-    await davRequest(url, wd, {
+    const headers = { 'Content-Type': 'application/json' };
+    if (options && options.ifMatch) headers['If-Match'] = options.ifMatch;
+    const resp = await davRequest(url, wd, {
       method: 'PUT',
       signal: options && options.signal,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(obj, null, 2)
     });
+    if (typeof resp._davCleanup === 'function') resp._davCleanup();
   }
 
-  // 依次确保 remoteDir、openpocket、v2 三层目录存在。
+  // 依次确保 remoteDir 的每一级父目录、openpocket、v2 目录存在。
+  // 标准 WebDAV MKCOL 要求父集合已存在；不能把 409 当“已存在”而跳过（OCP-CONF-031）。
   async function ensureRemoteDirs(wd, options) {
     const signal = options && options.signal;
     const dir = remoteDirPath(wd);
-    const segments = [dir, dir + '/openpocket', dir + '/openpocket/v2'];
+    const parts = dir ? dir.split('/').map((s) => s.trim()).filter(Boolean) : [];
+    const segments = [];
+    let cur = '';
+    for (const part of parts) {
+      cur = cur ? cur + '/' + part : part;
+      segments.push(cur);
+    }
+    const base = cur ? cur + '/' : '';
+    segments.push(base + 'openpocket');
+    segments.push(base + 'openpocket/v2');
     for (const seg of segments) {
       const url = joinUrl(wd.url, seg + '/');
+      let resp;
       try {
-        await davRequest(url, wd, {
+        resp = await davRequest(url, wd, {
           method: 'PROPFIND',
           signal,
           headers: { 'Depth': '0' },
@@ -188,14 +220,22 @@
       } catch (e) {
         if (e.code === 404) {
           try {
-            await davRequest(url, wd, { method: 'MKCOL', signal });
+            const mk = await davRequest(url, wd, { method: 'MKCOL', signal });
+            if (mk && typeof mk._davCleanup === 'function') mk._davCleanup();
           } catch (e2) {
-            // 并发或已存在时的 405/409 视为成功。
-            if (!(e2 && (e2.code === 405 || e2.code === 409))) throw e2;
+            // 405 通常表示目录已存在（并发创建）；409 表示父目录不存在，不能静默成功。
+            if (!(e2 && e2.code === 405)) {
+              if (e2 && e2.code === 409) {
+                throw { code: 409, message: '创建远端目录失败：父目录不存在或权限不足（' + seg + '）' };
+              }
+              throw e2;
+            }
           }
         } else {
           throw e;
         }
+      } finally {
+        if (resp && typeof resp._davCleanup === 'function') resp._davCleanup();
       }
     }
   }
@@ -212,6 +252,58 @@
           : `远端数据结构版本不兼容（schema v${v || '未知'}，本端需要 v${SCHEMA_VERSION}）。已停止且未覆盖任何数据；请先在服务器上清理旧数据后用「仅上传」重建`
       };
     }
+  }
+
+  function assertPackSchema(pack, name) {
+    if (!pack || pack.schemaVersion == null) return;
+    const v = Number(pack.schemaVersion);
+    if (v !== SCHEMA_VERSION) {
+      throw {
+        code: 'schema',
+        message: `远端文件 ${name} 的结构版本不兼容（schema v${v || '未知'}，本端需要 v${SCHEMA_VERSION}），已停止且未覆盖任何数据`
+      };
+    }
+  }
+
+  // 仅下载/远端合并前校验收藏数据结构，拒绝畸形 data 清空本地（OCP-CONF-002）。
+  function assertCollectionsData(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw { code: 'schema', message: '远端收藏数据不是有效对象，已停止且未修改本地数据' };
+    }
+    if (!Array.isArray(data.groups)) {
+      throw { code: 'schema', message: '远端收藏数据缺少 groups 数组，已停止且未修改本地数据' };
+    }
+    for (const g of data.groups) {
+      if (!g || typeof g !== 'object' || Array.isArray(g)) {
+        throw { code: 'schema', message: '远端收藏数据包含损坏的分组，已停止且未修改本地数据' };
+      }
+      if (g.cards != null && !Array.isArray(g.cards)) {
+        throw { code: 'schema', message: '远端收藏数据包含损坏的卡片列表，已停止且未修改本地数据' };
+      }
+    }
+    return true;
+  }
+
+  function sanitizeCollectionsData(data) {
+    const clean = Utils.clone(data);
+    let skipped = 0;
+    for (const g of clean.groups) {
+      if (!Array.isArray(g.cards)) g.cards = [];
+      g.cards = g.cards.filter((c) => {
+        if (c && typeof c === 'object' && Utils.isCollectableUrl(c.url)) return true;
+        skipped++;
+        return false;
+      });
+    }
+    clean.__skippedUncollectable = skipped;
+    return clean;
+  }
+
+  function partialRemoteError() {
+    return {
+      code: 'partial',
+      message: '远端存在数据文件但缺少 meta.json（可能上次写入中断）。已停止且未覆盖任何数据；请先在服务器检查/清理残缺文件后重试'
+    };
   }
 
   const WebDAV = {};
@@ -266,9 +358,17 @@
     if (!granted) throw { code: 0, message: '需要授权访问该服务器的网络权限' };
     const meta = await readRemoteJson(settings, remoteFileUrl(settings, FILE_META), options);
     assertSchemaCompatible(meta);
-    if (!meta) return null;
+    if (!meta) {
+      // meta 缺失但 collections 存在 = 部分写入；不能当作空远端（OCP-CONF-017）。
+      const maybeCollections = await readRemoteJson(settings, remoteFileUrl(settings, FILE_COLLECTIONS), options);
+      if (maybeCollections) throw partialRemoteError();
+      return null;
+    }
     const pack = await readRemoteJson(settings, remoteFileUrl(settings, FILE_COLLECTIONS), options);
-    return pack && pack.data ? pack.data : null;
+    if (!pack || !pack.data) return null;
+    assertPackSchema(pack, FILE_COLLECTIONS);
+    assertCollectionsData(pack.data);
+    return sanitizeCollectionsData(pack.data);
   };
 
   // 拉取远端备份快照（最多保留最近 3 份），上传到 backups.json。
@@ -293,6 +393,10 @@
       throw { code: 'disabled', message: 'WebDAV 同步未启用：请先在设置中启用并确认首次说明' };
     }
     assertHttps(wdConfig.url);
+    const granted = await ensureHostPermission(wdConfig.url);
+    if (!granted) {
+      throw { code: 'permission', message: '需要授权访问该 WebDAV 服务器的网络权限。请先在设置页手动测试连接或同步一次并允许访问' };
+    }
     // 凭据只在发请求前临时解密，不写入设置对象，也不参与任何远端文件内容。
     const secrets = await Storage.loadSecrets();
     const wd = Object.assign({}, wdConfig, {
@@ -305,14 +409,22 @@
       throw { code: 'cancelled', message: '同步已取消' };
     }
 
-    // 拉取/合并前生成本地快照（可回滚）。
+    // 拉取/合并前生成本地快照（可回滚）；失败路径在 catch 中清理，避免 sync-before 无限累积（OCP-CONF-009）。
     const backupKey = await Storage.createBackup('sync-before');
+    try {
     const localData = await Storage.load();
 
-    // ---- 远端读取与版本检查 ----
+    // ---- 远端读取与版本检查（同时记录 ETag，写回时用 If-Match 防止并发覆盖，OCP-CONF-030）----
     let meta = null;
+    let metaEtag = null;
+    let collectionsEtag = null;
+    let settingsEtag = null;
+    let cacheEtag = null;
+    let backupsEtag = null;
     if (mode !== 'upload') {
-      meta = await readRemoteJson(wd, remoteFileUrl(wd, FILE_META), { signal: opts.signal });
+      const metaOpts = { signal: opts.signal };
+      meta = await readRemoteJson(wd, remoteFileUrl(wd, FILE_META), metaOpts);
+      metaEtag = metaOpts.etag || null;
       assertSchemaCompatible(meta);
       if (!meta) {
         // 旧版 v1 单文件：识别并提示，不强行覆盖。
@@ -323,11 +435,20 @@
             message: '检测到旧版远端数据（v1 单文件结构），已停止且未覆盖任何数据；请用「仅上传」把本机数据写入新版结构，或先在服务器上移除旧文件'
           };
         }
+        // meta 缺失但已有 collections/settings：上次写入中断，不能当空远端覆盖（OCP-CONF-017）。
+        const partial = await readRemoteJson(wd, remoteFileUrl(wd, FILE_COLLECTIONS), { signal: opts.signal });
+        if (partial) throw partialRemoteError();
       }
     } else {
-      // 显式上传也要避免覆盖由更新版本写入的远端。
-      meta = await readRemoteJson(wd, remoteFileUrl(wd, FILE_META), { signal: opts.signal });
+      // 显式上传也要避免覆盖由更新版本写入的远端；旧版/低版本允许重建（仅上传的语义）。
+      const metaOpts = { signal: opts.signal };
+      meta = await readRemoteJson(wd, remoteFileUrl(wd, FILE_META), metaOpts);
+      metaEtag = metaOpts.etag || null;
       if (meta && Number(meta.schemaVersion) > SCHEMA_VERSION) assertSchemaCompatible(meta);
+      if (!meta) {
+        const partial = await readRemoteJson(wd, remoteFileUrl(wd, FILE_COLLECTIONS), { signal: opts.signal });
+        if (partial) throw partialRemoteError();
+      }
     }
 
     let remoteCollections = null;
@@ -335,14 +456,33 @@
     let remoteCachePack = null;
     let remoteBackupsPack = null;
     if (mode !== 'upload' && meta) {
-      remoteCollections = await readRemoteJson(wd, remoteFileUrl(wd, FILE_COLLECTIONS), { signal: opts.signal });
-      remoteSettingsPack = await readRemoteJson(wd, remoteFileUrl(wd, FILE_SETTINGS), { signal: opts.signal });
+      const collectionsOpts = { signal: opts.signal };
+      remoteCollections = await readRemoteJson(wd, remoteFileUrl(wd, FILE_COLLECTIONS), collectionsOpts);
+      collectionsEtag = collectionsOpts.etag || null;
+      const settingsOpts = { signal: opts.signal };
+      remoteSettingsPack = await readRemoteJson(wd, remoteFileUrl(wd, FILE_SETTINGS), settingsOpts);
+      settingsEtag = settingsOpts.etag || null;
+      if (remoteCollections) assertPackSchema(remoteCollections, FILE_COLLECTIONS);
+      if (remoteSettingsPack) assertPackSchema(remoteSettingsPack, FILE_SETTINGS);
       if (scope.aiCache) {
-        remoteCachePack = await readRemoteJson(wd, remoteFileUrl(wd, FILE_AI_CACHE), { signal: opts.signal });
+        const cacheOpts = { signal: opts.signal };
+        remoteCachePack = await readRemoteJson(wd, remoteFileUrl(wd, FILE_AI_CACHE), cacheOpts);
+        cacheEtag = cacheOpts.etag || null;
+        if (remoteCachePack) assertPackSchema(remoteCachePack, FILE_AI_CACHE);
       }
       if (scope.backups) {
-        remoteBackupsPack = await readRemoteJson(wd, remoteFileUrl(wd, FILE_BACKUPS), { signal: opts.signal });
+        const backupsOpts = { signal: opts.signal };
+        remoteBackupsPack = await readRemoteJson(wd, remoteFileUrl(wd, FILE_BACKUPS), backupsOpts);
+        backupsEtag = backupsOpts.etag || null;
+        if (remoteBackupsPack) assertPackSchema(remoteBackupsPack, FILE_BACKUPS);
       }
+    }
+    // 仅上传也要读取远端备份快照，避免用本地前 3 份覆盖远端独有快照（OCP-CONF-013）。
+    if (mode === 'upload' && scope.backups && meta) {
+      const backupsOpts = { signal: opts.signal };
+      remoteBackupsPack = await readRemoteJson(wd, remoteFileUrl(wd, FILE_BACKUPS), backupsOpts);
+      backupsEtag = backupsOpts.etag || null;
+      if (remoteBackupsPack) assertPackSchema(remoteBackupsPack, FILE_BACKUPS);
     }
 
     if (opts.signal && opts.signal.aborted) {
@@ -353,21 +493,28 @@
     // 收藏数据的读改写放进 Storage.mutate：网络读写可能持续数秒，期间用户新增/编辑的数据
     // 会在锁内重新加载后参与合并，而不是被同步开始时读取的旧快照覆盖。
     let saved;
+    let uploadData = null;
     let settingsChanged = 0;
     let cacheMergedCount = null;
     let cacheSkipped = false;
     let backupsImported = 0;
     let skippedUncollectable = 0;
+    let aiCachePayload = null;
+    const warnings = [];
 
     if (mode === 'upload') {
-      // 强制上传：本地全部标记为最新，让本地在这次同步中胜出。
-      saved = await Storage.mutate((data) => {
-        Storage.touchAll(data);
-      });
+      // 仅上传：只在内存副本上标记最新并上传；远端全部写成功后再落盘时间戳，
+      // 失败时本地时间戳保持原样，不污染后续合并（OCP-CONF-029）。
+      const current = await Storage.load();
+      uploadData = Storage.touchAll(Utils.clone(current));
+      saved = uploadData;
     } else if (mode === 'download') {
       if (!remoteCollections || !remoteCollections.data) {
         throw { code: 404, message: '远端还没有收藏数据文件，未做任何修改' };
       }
+      assertCollectionsData(remoteCollections.data);
+      const cleanCollections = sanitizeCollectionsData(remoteCollections.data);
+      skippedUncollectable = cleanCollections.__skippedUncollectable || 0;
       if (remoteSettingsPack && remoteSettingsPack.settings) {
         const r = await Storage.applySyncedSettings(remoteSettingsPack.settings, remoteSettingsPack.keys, { force: true });
         settingsChanged = r.changed.length;
@@ -378,10 +525,9 @@
         else cacheMergedCount = Object.keys(remoteCachePack.cache).length;
       }
       saved = await Storage.mutate((data) => {
-        const incoming = Utils.clone(remoteCollections.data);
-        data.groups = incoming.groups;
-        data.activeGroupId = incoming.activeGroupId;
-        if (incoming.version != null) data.version = incoming.version;
+        data.groups = cleanCollections.groups;
+        data.activeGroupId = cleanCollections.activeGroupId;
+        if (cleanCollections.version != null) data.version = cleanCollections.version;
       });
     } else {
       // sync：收藏按条目级 lastModified + 删除墓碑合并；设置按键级时间取新。
@@ -400,7 +546,10 @@
         }
         const cacheRes = await Storage.saveAiCacheRaw(mergedCache);
         if (cacheRes && cacheRes.skipped) cacheSkipped = true;
-        else cacheMergedCount = Object.keys(mergedCache).length;
+        else {
+          cacheMergedCount = Object.keys(mergedCache).length;
+          aiCachePayload = mergedCache;
+        }
       }
       saved = await Storage.mutate((data) => {
         const mergeStats = {};
@@ -421,7 +570,9 @@
         try {
           await Storage.putBackup(snap.key, snap.data);
           backupsImported++;
-        } catch (e) {}
+        } catch (e) {
+          warnings.push('远端备份快照导入失败：' + (snap.key || '未知') + '（' + (e.message || e) + '）');
+        }
       }
     }
 
@@ -436,21 +587,22 @@
         schemaVersion: SCHEMA_VERSION,
         lastWrite: now,
         data: saved
-      }, { signal: opts.signal });
+      }, { signal: opts.signal, ifMatch: collectionsEtag || undefined });
       const bundle = await Storage.exportSettingsForSync();
       await writeRemoteJson(wd, remoteFileUrl(wd, FILE_SETTINGS), {
         schemaVersion: SCHEMA_VERSION,
         lastWrite: now,
         settings: bundle.settings,
         keys: bundle.keys
-      }, { signal: opts.signal });
-      if (scope.aiCache) {
-        const cache = await Storage.loadAiCache();
+      }, { signal: opts.signal, ifMatch: settingsEtag || undefined });
+      if (scope.aiCache && !cacheSkipped) {
+        // 本地配额不足时跳过写回，绝不用旧本地缓存覆盖远端（OCP-CONF-028）。
+        const cache = aiCachePayload || await Storage.loadAiCache();
         await writeRemoteJson(wd, remoteFileUrl(wd, FILE_AI_CACHE), {
           schemaVersion: SCHEMA_VERSION,
           lastWrite: now,
           cache
-        }, { signal: opts.signal });
+        }, { signal: opts.signal, ifMatch: cacheEtag || undefined });
         files.aiCache = now;
         if (cacheMergedCount == null) cacheMergedCount = Object.keys(cache).length;
       }
@@ -460,7 +612,7 @@
           schemaVersion: SCHEMA_VERSION,
           lastWrite: now,
           snapshots
-        }, { signal: opts.signal });
+        }, { signal: opts.signal, ifMatch: backupsEtag || undefined });
         files.backups = now;
       }
       await writeRemoteJson(wd, remoteFileUrl(wd, FILE_META), {
@@ -468,7 +620,26 @@
         schemaVersion: SCHEMA_VERSION,
         lastWrite: now,
         files
-      }, { signal: opts.signal });
+      }, { signal: opts.signal, ifMatch: metaEtag || undefined });
+    }
+
+    // 仅上传成功后再把本次上传的时间戳提升到本地（只更新仍存在的条目，保留并发编辑）。
+    if (mode === 'upload' && uploadData) {
+      const stamps = new Map();
+      for (const ug of uploadData.groups) {
+        stamps.set(ug.id, { group: ug.updatedAt, cards: new Map(ug.cards.map((c) => [c.id, c.updatedAt])) });
+      }
+      await Storage.mutate((data) => {
+        for (const g of data.groups) {
+          const st = stamps.get(g.id);
+          if (!st) continue;
+          g.updatedAt = st.group;
+          for (const c of g.cards) {
+            const t = st.cards.get(c.id);
+            if (t != null) c.updatedAt = t;
+          }
+        }
+      });
     }
 
     // 清理旧备份，保留最近 10 份。
@@ -477,6 +648,7 @@
     return {
       ok: true,
       mode,
+      uploaded: mode === 'upload',
       backupKey,
       groups: saved.groups.filter((g) => !g.deleted).length,
       stats,
@@ -484,8 +656,14 @@
       aiCacheCount: cacheMergedCount,
       aiCacheSkipped: cacheSkipped,
       uncollectableSkipped: skippedUncollectable,
-      backupsImported
+      backupsImported,
+      warnings
     };
+    } catch (e) {
+      // 同步失败时清理本次 sync-before，避免失败自动同步无限累积备份并耗尽配额（OCP-CONF-009）。
+      try { await Storage.deleteBackup(backupKey); } catch (err) {}
+      throw e;
+    }
   };
 
   global.WebDAV = WebDAV;
