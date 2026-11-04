@@ -4,8 +4,6 @@
 
 [![从 Edge 加载项安装](https://img.shields.io/badge/Edge%20Add--ons-从%20Edge%20加载项安装-0b6cff?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold)
 
-[**从 Edge 加载项安装 →**](https://microsoftedge.microsoft.com/addons/detail/open-collections/dcdedbkplgmmgdogcfocoojihnhbaold)
-
 ![独立管理窗口（演示数据）](docs/assets/screenshots/standalone.png)
 ![AI 整理预览（演示数据，mock 响应）](docs/assets/screenshots/ai-preview.png)
 
