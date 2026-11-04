@@ -70,26 +70,46 @@ chrome.runtime.onStartup.addListener(() => {
 // 仅用于批量收藏定位窗口（get-recent-web-window）。
 // 「添加当前页 / 摘录」不再使用该记录做任何回退：取不到活动标签或活动标签不可收藏时直接拒绝。
 const RECENT_TAB_KEY = 'recentWebTab';
+let recentTabSeq = 0;
+let recentTabWriteChain = Promise.resolve();
+
+function enqueueRecentTabWrite(task) {
+  const run = () => Promise.resolve().then(task);
+  const result = recentTabWriteChain.then(run, run);
+  recentTabWriteChain = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 function isWebTabUrl(url) {
   return /^https?:/i.test(String(url || ''));
 }
 
-async function trackWebTab(tab) {
+async function trackWebTab(tab, seq) {
   if (!tab || typeof tab.id !== 'number' || tab.id < 0) return;
+  const version = seq == null ? ++recentTabSeq : seq;
   if (!isWebTabUrl(tab.url)) {
     // 导航到内部页/本地文件时，旧网页记录不能继续被当作“最近网页标签”。
     await clearRecentWebTab(tab.id);
     return;
   }
-  const record = { id: tab.id, windowId: tab.windowId, url: tab.url, title: tab.title || tab.url };
-  try {
-    if (chrome.storage.session) {
-      await chrome.storage.session.set({ [RECENT_TAB_KEY]: record });
-    } else {
-      globalThis.__recentWebTab = record;
-    }
-  } catch (e) {}
+  return enqueueRecentTabWrite(async () => {
+    // 晚到的 tabs.get / 旧事件不能覆盖较新的记录。
+    if (version !== recentTabSeq) return;
+    const record = {
+      id: tab.id,
+      windowId: tab.windowId,
+      url: tab.url,
+      title: tab.title || tab.url,
+      seq: version
+    };
+    try {
+      if (chrome.storage.session) {
+        await chrome.storage.session.set({ [RECENT_TAB_KEY]: record });
+      } else {
+        globalThis.__recentWebTab = record;
+      }
+    } catch (e) {}
+  });
 }
 
 async function removeRecentWebTabRaw() {
@@ -99,48 +119,51 @@ async function removeRecentWebTabRaw() {
   } catch (e) {}
 }
 
-async function readRecentWebTab() {
-  let recent = null;
+async function readRecentWebTabRaw() {
   try {
     if (chrome.storage.session) {
       const items = await chrome.storage.session.get(RECENT_TAB_KEY);
-      recent = (items && items[RECENT_TAB_KEY]) || null;
+      return (items && items[RECENT_TAB_KEY]) || null;
     }
   } catch (e) {}
-  if (!recent) recent = globalThis.__recentWebTab || null;
+  return globalThis.__recentWebTab || null;
+}
+
+async function readRecentWebTab() {
+  const recent = await readRecentWebTabRaw();
   if (!recent || typeof recent.id !== 'number') return null;
   try {
     const tab = await chrome.tabs.get(recent.id);
     if (!tab || !isWebTabUrl(tab.url)) {
+      ++recentTabSeq;
       await removeRecentWebTabRaw();
       return null;
     }
     return Object.assign({}, recent, { windowId: tab.windowId, url: tab.url, title: tab.title || recent.title });
   } catch (e) {
+    ++recentTabSeq;
     await removeRecentWebTabRaw();
     return null;
   }
 }
 
 async function clearRecentWebTab(tabId) {
-  let recent = null;
-  try {
-    if (chrome.storage.session) {
-      const items = await chrome.storage.session.get(RECENT_TAB_KEY);
-      recent = (items && items[RECENT_TAB_KEY]) || null;
-    }
-  } catch (e) {}
-  if (!recent) recent = globalThis.__recentWebTab || null;
-  if (recent && recent.id === tabId) {
-    await removeRecentWebTabRaw();
-  }
+  // 递增版本使仍在等待 tabs.get 的旧事件失效；删除也进入同一写队列。
+  ++recentTabSeq;
+  return enqueueRecentTabWrite(async () => {
+    const recent = await readRecentWebTabRaw();
+    if (recent && recent.id === tabId) await removeRecentWebTabRaw();
+  });
 }
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
-  chrome.tabs.get(tabId).then(trackWebTab).catch(() => {});
+  const version = ++recentTabSeq;
+  chrome.tabs.get(tabId).then((tab) => trackWebTab(tab, version)).catch(() => {});
 });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url || changeInfo.title) trackWebTab(tab);
+  if (!changeInfo.url && !changeInfo.title) return;
+  const version = ++recentTabSeq;
+  trackWebTab(tab, version).catch(() => {});
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
   clearRecentWebTab(tabId).catch(() => {});
@@ -149,34 +172,52 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // ---- 最近活跃的普通浏览器窗口（独立窗口批量收藏用）----
 // 独立管理窗口是 popup 类型：记录最近聚焦的 normal 窗口，供「收藏并关闭标签页」定位目标。
 const RECENT_WINDOW_KEY = 'recentNormalWindow';
+let recentWindowSeq = 0;
+let recentWindowWriteChain = Promise.resolve();
 
-async function readRecentNormalWindow() {
+function enqueueRecentWindowWrite(task) {
+  const run = () => Promise.resolve().then(task);
+  const result = recentWindowWriteChain.then(run, run);
+  recentWindowWriteChain = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function readRecentNormalWindowRaw() {
   try {
     if (chrome.storage.session) {
       const items = await chrome.storage.session.get(RECENT_WINDOW_KEY);
-      const rec = items && items[RECENT_WINDOW_KEY];
-      if (rec && typeof rec.id === 'number') {
-        const win = await chrome.windows.get(rec.id).catch(() => null);
-        if (win && win.type === 'normal') return rec.id;
-      }
-      return null;
+      return (items && items[RECENT_WINDOW_KEY]) || null;
     }
   } catch (e) {}
-  return typeof globalThis.__recentNormalWindow === 'object'
-    ? globalThis.__recentNormalWindow.id : null;
+  return globalThis.__recentNormalWindow || null;
+}
+
+async function readRecentNormalWindow() {
+  const rec = await readRecentNormalWindowRaw();
+  if (!rec || typeof rec.id !== 'number') return null;
+  try {
+    const win = await chrome.windows.get(rec.id);
+    if (win && win.type === 'normal') return rec.id;
+  } catch (e) {}
+  return null;
 }
 
 if (chrome.windows && chrome.windows.onFocusChanged) {
   chrome.windows.onFocusChanged.addListener(async (windowId) => {
     if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+    const version = ++recentWindowSeq;
     try {
       const win = await chrome.windows.get(windowId);
-      if (win.type !== 'normal') return;
-      if (chrome.storage.session) {
-        await chrome.storage.session.set({ [RECENT_WINDOW_KEY]: { id: win.id } });
-      } else {
-        globalThis.__recentNormalWindow = { id: win.id };
-      }
+      if (version !== recentWindowSeq) return;
+      if (!win || win.type !== 'normal') return;
+      await enqueueRecentWindowWrite(async () => {
+        if (version !== recentWindowSeq) return;
+        if (chrome.storage.session) {
+          await chrome.storage.session.set({ [RECENT_WINDOW_KEY]: { id: win.id, seq: version } });
+        } else {
+          globalThis.__recentNormalWindow = { id: win.id, seq: version };
+        }
+      });
     } catch (e) {}
   });
 }

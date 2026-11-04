@@ -410,6 +410,7 @@
     }
 
     // 拉取/合并前生成本地快照（可回滚）；失败路径在 catch 中清理，避免 sync-before 无限累积（OCP-CONF-009）。
+    const syncStartedAt = Date.now();
     const backupKey = await Storage.createBackup('sync-before');
     try {
     const localData = await Storage.load();
@@ -644,6 +645,16 @@
 
     // 清理旧备份，保留最近 10 份。
     await Storage.clearOldBackups(10);
+
+    // 成功同步后记录水位并清理早于水位 90 天的旧墓碑（仅上传/双向；仅下载不清理本地旧墓碑）。
+    if (mode !== 'download') {
+      try {
+        await Storage.setSyncWatermark(syncStartedAt);
+        await Storage.pruneTombstones(syncStartedAt);
+      } catch (e) {
+        warnings.push('本地墓碑清理失败：' + (e.message || e));
+      }
+    }
 
     return {
       ok: true,

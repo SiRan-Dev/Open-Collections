@@ -678,6 +678,28 @@
         handleExternalUrlDrop(e.dataTransfer, pinnedTarget);
       });
     }
+
+    // 默认集锦为空时，空状态区域也接受外部网页拖入（OCP-CONF-035）。
+    if (els.empty) {
+      els.empty.addEventListener('dragover', (e) => {
+        if (!acceptExternalDrop()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        els.empty.classList.add('drop-target');
+      });
+      els.empty.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget && els.empty.contains(e.relatedTarget)) return;
+        els.empty.classList.remove('drop-target');
+      });
+      els.empty.addEventListener('drop', (e) => {
+        if (!acceptExternalDrop()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        els.empty.classList.remove('drop-target');
+        handleExternalUrlDrop(e.dataTransfer, false);
+      });
+    }
   }
 
   // 外部拖放仅在默认集锦（system 分组）视图生效。
@@ -1532,20 +1554,26 @@
       toast('导入失败：' + (e.message || e), 'error');
       return;
     }
-    const diffs = await Storage.diffSettingsExport(parsed.settings);
+    const diffs = await Storage.diffSettingsExport(parsed.settings, 'merge');
+    const overwriteDiffs = await Storage.diffSettingsExport(parsed.settings, 'overwrite');
+    const resetCount = overwriteDiffs.filter((d) => d.reset).length;
     pendingSettingsImport = parsed;
+    pendingSettingsImport.overwriteDiffs = overwriteDiffs;
     const when = parsed.exportedAt ? new Date(parsed.exportedAt).toLocaleString() : '未知时间';
     const sensitiveText = Object.entries(parsed.sensitive)
       .map(([k, v]) => `${k} ${v === 'configured' ? '已配置' : '未配置'}`)
       .join('；') || '无敏感项状态标记';
     $('settings-import-summary').textContent =
-      `导出时间 ${when}${parsed.appVersion ? ` · 来自 v${parsed.appVersion}` : ''} · 与当前设置差异 ${diffs.length} 项 · ${sensitiveText}`;
+      `导出时间 ${when}${parsed.appVersion ? ` · 来自 v${parsed.appVersion}` : ''} · 与当前设置差异 ${diffs.length} 项` +
+      `${resetCount ? ` · 覆盖模式还会重置 ${resetCount} 项` : ''} · ${sensitiveText}`;
     const list = $('settings-import-diff');
     list.textContent = '';
     if (!diffs.length) {
       const p = document.createElement('p');
       p.className = 'hint';
-      p.textContent = '文件中的设置与当前设置完全一致，可直接合并（不会改动任何值）。';
+      p.textContent = resetCount
+        ? `合并模式不会改动任何值；覆盖模式会重置 ${resetCount} 项文件中未出现的设置。`
+        : '文件中的设置与当前设置完全一致，可直接合并（不会改动任何值）。';
       list.appendChild(p);
     } else {
       for (const d of diffs) {
@@ -1567,9 +1595,12 @@
 
   async function applySettingsImport(mode) {
     if (!pendingSettingsImport) return;
-    if (mode === 'overwrite' &&
-      !confirm('覆盖导入会把文件中未出现的设置项恢复为默认值（凭据除外）。确定继续？')) {
-      return;
+    if (mode === 'overwrite') {
+      const resetCount = (pendingSettingsImport.overwriteDiffs || [])
+        .filter((d) => d.reset).length;
+      if (!confirm(`覆盖导入会把文件中未出现的 ${resetCount} 项设置恢复为默认值（凭据除外）。确定继续？`)) {
+        return;
+      }
     }
     try {
       const res = await Storage.applySettingsExport(pendingSettingsImport.settings, mode);

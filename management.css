@@ -652,7 +652,8 @@ textarea.text-input { resize: vertical; }
 /* 卡片内所有图标统一显式尺寸，禁止 SVG 撑满容器（动作按钮走 .card-action svg 16px）。 */
 .card svg { width: 14px; height: 14px; flex: none; display: block; }
 .card.pinned { background: var(--bg-soft); }
-#card-list.drop-target { outline: 2px dashed var(--primary); outline-offset: 2px; border-radius: 8px; }
+#card-list.drop-target,
+#empty-state.drop-target { outline: 2px dashed var(--primary); outline-offset: 2px; border-radius: 8px; }
 
 .wd-status {
   margin-top: 10px; padding: 8px 10px;
